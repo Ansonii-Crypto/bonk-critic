@@ -208,13 +208,13 @@ main{overflow-anchor:none}
 .class-card h2{margin:0;font-size:28px}
 .class-card p{margin:0 0 8px}
 .class-card button{margin-top:auto}
-.class-dialog{width:min(720px,calc(100% - 32px));max-height:calc(100vh - 32px);max-height:calc(100dvh - 32px);padding:20px;margin:auto;border:3px solid var(--line);border-radius:8px;background:var(--p);color:var(--text);box-shadow:0 6px 0 var(--line);overflow:hidden}
+.class-dialog{width:min(780px,calc(100% - 32px));height:90vh;height:90dvh;max-height:calc(100vh - 32px);max-height:calc(100dvh - 32px);padding:20px;margin:auto;border:3px solid var(--line);border-radius:8px;background:var(--p);color:var(--text);box-shadow:0 6px 0 var(--line);overflow:hidden}
 .class-dialog[open]{display:flex;flex-direction:column}
 .class-dialog::backdrop{background:#17232bc4}
 .class-dialog .app-dialog-heading{flex-shrink:0;margin-bottom:14px}
-.class-dialog-body{overflow-y:auto;min-height:0;overscroll-behavior:contain;padding:0}
-.class-example{margin:0}
-.class-video-stage{position:relative;width:100%;min-width:0;aspect-ratio:16/9;display:grid;grid-template-columns:minmax(0,1fr);place-items:center;overflow:hidden;border:2px solid var(--line);border-radius:6px;background:#25332d;color:var(--p)}
+.class-dialog-body{flex:1;overflow-y:auto;min-height:0;overscroll-behavior:contain;padding:0;scrollbar-width:thin}
+.class-example{flex:1;min-height:0;display:flex;flex-direction:column;margin:0}
+.class-video-stage{position:relative;flex:0 0 auto;width:100%;min-width:0;aspect-ratio:16/9;max-height:34vh;max-height:34dvh;display:grid;grid-template-columns:minmax(0,1fr);place-items:center;overflow:hidden;border:2px solid var(--line);border-radius:6px;background:#25332d;color:var(--p)}
 .class-video-stage video{position:absolute;inset:0;display:block;width:100%;height:100%;object-fit:contain;object-position:center;background:#101812}
 .class-video-placeholder{text-align:center;padding:20px}
 .class-video-placeholder>span{display:block;font-size:36px;margin-bottom:12px;color:#b3c9a5}
@@ -223,8 +223,22 @@ main{overflow-anchor:none}
 .class-example figcaption{padding-top:10px}
 .class-example figcaption p{margin:8px 0;line-height:1.5}
 .class-example figcaption p:last-child{margin-bottom:0}
+.class-relationships{margin-top:20px;padding-top:16px;border-top:2px dashed #c8c3b2}
+.class-relationships>h3{margin:0 0 6px;font-size:20px}
+.class-relationships>.meta{margin-top:0}
+.class-relationships-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:16px;padding-bottom:4px}
+.class-relationship-group{min-width:0;padding:12px;background:var(--p2);border:2px solid #b6b09f;border-radius:6px}
+.class-relationship-group h4{margin:0 0 10px;font-size:13px}
+.class-relationship-group ul{list-style:none;margin:0;padding:0}
+.class-relationship-group li+li{margin-top:12px;padding-top:12px;border-top:1px solid #b6b09f}
+.class-relationship-group p{font-size:12px;overflow-wrap:anywhere}
+.class-relationship-link{display:inline-flex;align-items:center;gap:6px;max-width:100%;min-height:36px;padding:0;border:0;border-radius:0;background:none;color:var(--text);font-size:14px;text-align:left;box-shadow:none;transform:none;filter:none;overflow-wrap:anywhere}
+.class-relationship-link:hover,.class-relationship-link:active{background:none;box-shadow:none;transform:none;filter:none;text-decoration:underline}
+.class-relationship-link span{color:var(--muted)}
+.class-relationship-link:focus-visible{outline-offset:2px}
 @media(max-width:800px){.classes-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:540px){.classes-grid{grid-template-columns:1fr}.class-dialog{padding:16px}.class-video-placeholder{padding:12px}.class-video-placeholder>span{font-size:24px;margin-bottom:6px}}
+@media(max-width:540px){.classes-grid{grid-template-columns:1fr}.class-dialog{padding:16px}.class-video-placeholder{padding:12px}.class-video-placeholder>span{font-size:24px;margin-bottom:6px}.class-relationships-grid{grid-template-columns:1fr}.class-relationship-link{min-height:44px}}
+@media(max-height:480px){.class-video-placeholder{padding:6px}.class-video-placeholder>span,.class-video-placeholder p{display:none}}
 
 .assessment-tier-picker{min-width:0;margin:0;padding:0;border:0}
 .assessment-tier-picker legend{margin-bottom:6px;padding:0;color:var(--muted);font-size:12px;font-weight:bold}
