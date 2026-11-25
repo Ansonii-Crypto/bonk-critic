@@ -2,8 +2,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-const source=readFileSync(new URL('../src/index.js',import.meta.url),'utf8');
-const worker=(await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'))).default;
+const worker=(await import('../src/index.js')).default;
 const origin='https://bonk-critic.com',hash=async value=>Buffer.from(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value))).toString('hex');
 async function setup(){
  const db=new DatabaseSync(':memory:');db.exec('PRAGMA foreign_keys=ON');db.exec(readFileSync(new URL('../schema.sql',import.meta.url),'utf8'));

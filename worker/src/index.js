@@ -1,3 +1,5 @@
+import '../../ratings.js';
+
 const H=(origin,env)=>({'Content-Type':'application/json','Access-Control-Allow-Origin':env.ALLOWED_ORIGIN||origin,'Access-Control-Allow-Credentials':'true','Vary':'Origin','Cache-Control':'no-store'});
 const J=(d,s,o,e)=>new Response(JSON.stringify(d),{status:s,headers:H(o,e)});const A=['control','execution','defending','reaction_time','chemistry','game_sense'];
 const now=()=>new Date().toISOString();const uuid=()=>crypto.randomUUID();
@@ -57,7 +59,8 @@ function valid(p){if(!p.name?.trim())return'Player name is required.';if(!/^[SAB
 async function duplicatePlayer(e,name,exceptId=''){return e.DB.prepare('SELECT id FROM players WHERE trim(name) = trim(?) COLLATE NOCASE AND id <> ? LIMIT 1').bind(name,exceptId).first()}
 const duplicateNameError='A player with that name already exists. Edit the existing player to add another assessment.';
 function snap(e,p,onlyChanged=false){return e.DB.prepare(`INSERT INTO assessments(player_id,assessed_at,overall_tier,control,execution,defending,reaction_time,chemistry,game_sense,total,class_name,playstyle,strengths,weaknesses) ${onlyChanged?'SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE changes() > 0':'VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)'}`).bind(p.id,p.assessed_at,p.overall_tier,...A.map(k=>Number(p[k])),total(p),p.class_name||'',p.playstyle||'',p.strengths||'',p.weaknesses||'')}
-const calculatedTier=p=>{let average=total(p)/A.length;return average>=257?'S':average>=215?'A':average>=172?'B':average>=129?'C':average>=86?'D':average>=43?'E':'F'};
+const calculatedTier=p=>BonkRatings.tierForTotal(A.reduce((sum,key)=>sum+Math.max(0,Math.min(300,Number(p[key])||0)),0));
+const ratedRecord=p=>({...p,overall_tier:calculatedTier(p)});
 function draftData(input){
  if(!input||typeof input!=='object'||Array.isArray(input))return null;
  const keys=['name','class_name','overall_tier','assessed_at','playstyle','strengths','weaknesses',...A],data={};
@@ -66,6 +69,7 @@ function draftData(input){
 }
 async function main(r,e){let u=new URL(r.url),o=r.headers.get('Origin')||'',p=u.pathname,m=r.method;
 if(m==='OPTIONS')return new Response(null,{status:204,headers:{...H(o,e),'Access-Control-Allow-Methods':'GET,POST,PUT,DELETE,OPTIONS','Access-Control-Allow-Headers':'Content-Type, Authorization, X-Account-Session'}});
+if(p==='/api/tier-system'&&m==='GET')return J({cutoffs:BonkRatings.cutoffs,metadata:BonkRatings.metadata},200,o,e);
 if(p==='/api/bonk/login'&&m==='POST'){
  let b=await r.json().catch(()=>({}));
  if(typeof b.username!=='string'||!b.username.trim()||b.username.length>100||typeof b.password!=='string'||!b.password||b.password.length>1024)return J({error:'Enter your Bonk username and password.'},400,o,e);
@@ -158,13 +162,13 @@ let actors=await e.DB.prepare('SELECT actor_id AS id,MAX(actor_name) AS name FRO
 return J({logs:rows.results,total,page,page_size:size,total_pages:pages,administrators:actors.results,actions:actions.results.map(x=>x.action)},200,o,e)}
 if(p==='/api/recent-assessments'&&m==='GET'){
  const rows=await e.DB.prepare(`SELECT p.id,p.name,p.class_name,p.overall_tier,(p.control+p.execution+p.defending+p.reaction_time+p.chemistry+p.game_sense) AS total,l.created_at AS changed_at,l.actor_name AS assessed_by,CASE WHEN l.action='created_player' THEN 'added' ELSE 'updated' END AS kind FROM players p JOIN activity_logs l ON l.id=(SELECT MAX(recent.id) FROM activity_logs recent WHERE recent.player_id=p.id AND recent.action IN ('created_player','updated_player') AND EXISTS(SELECT 1 FROM assessments a WHERE a.id=recent.assessment_id AND a.player_id=p.id)) ORDER BY l.created_at DESC,l.id DESC LIMIT 20`).all();
- return J({updates:rows.results},200,o,e);
+ return J({updates:rows.results.map(row=>({...row,overall_tier:BonkRatings.tierForTotal(row.total)}))},200,o,e);
 }
 if(p==='/api/player-drafts'||p.startsWith('/api/player-drafts/')){
  const user=await session(r,e);if(!user?.id)return J({error:'Sign in to view player drafts.'},401,o,e);
  const match=p.match(/^\/api\/player-drafts\/([^/]+)(\/push)?$/),id=match?decodeURIComponent(match[1]):null;
  if(!id&&p!=='/api/player-drafts')return J({error:'Not found.'},404,o,e);
- if(!id&&m==='GET'){let rows=await e.DB.prepare('SELECT * FROM player_drafts ORDER BY updated_at DESC,id').all();return J({drafts:rows.results.map(row=>({...row,data:JSON.parse(row.data)}))},200,o,e)}
+ if(!id&&m==='GET'){let rows=await e.DB.prepare('SELECT * FROM player_drafts ORDER BY updated_at DESC,id').all();return J({drafts:rows.results.map(row=>({...row,data:ratedRecord(JSON.parse(row.data))}))},200,o,e)}
  if(!id&&m==='POST'){
   let b=await r.json(),data=draftData(b.data);if(!data)return J({error:'Invalid draft data.'},400,o,e);
   const draftId=uuid();await e.DB.prepare('INSERT INTO player_drafts(id,owner_id,owner_name,data,updated_at) VALUES(?,?,?,?,?)').bind(draftId,user.id,user.name,JSON.stringify(data),now()).run();return J({id:draftId,revision:1},201,o,e);
@@ -268,7 +272,7 @@ if(p==='/api/public-profile'&&m==='GET'){
  const player=await e.DB.prepare('SELECT id FROM players WHERE trim(name)=trim(?) COLLATE NOCASE LIMIT 1').bind(profile.username).first();
  return J({profile,player_id:player?.id||null},200,o,e);
 }
-if(p==='/api/players'&&m==='GET'){let x=await e.DB.prepare('SELECT * FROM players ORDER BY name COLLATE NOCASE').all();return J({players:x.results},200,o,e)}
+if(p==='/api/players'&&m==='GET'){let x=await e.DB.prepare('SELECT * FROM players ORDER BY name COLLATE NOCASE').all();return J({players:x.results.map(ratedRecord)},200,o,e)}
 if(p==='/api/players'&&m==='POST'){let q=await guard(r,e,o);if(q)return q;let b=await r.json();b.overall_tier=calculatedTier(b);let err=valid(b);if(err)return J({error:err},400,o,e);if(await duplicatePlayer(e,b.name.trim()))return J({error:duplicateNameError},409,o,e);let i=uuid(),t=now();await e.DB.batch([e.DB.prepare('INSERT INTO players(id,name,class_name,overall_tier,control,execution,defending,reaction_time,chemistry,game_sense,playstyle,strengths,weaknesses,assessed_at,locked,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').bind(i,b.name.trim(),b.class_name||'',b.overall_tier,...A.map(k=>Number(b[k])),b.playstyle||'',b.strengths||'',b.weaknesses||'',b.assessed_at,0,t,t),snap(e,{...b,id:i}),audit(e,await session(r,e),'created_player',{...b,id:i,name:b.name.trim()})]);return J({ok:true,id:i},201,o,e)}
 let assessmentDelete=p.match(/^\/api\/players\/([^/]+)\/assessments\/(\d+)$/);
 if(assessmentDelete&&m==='DELETE'){
@@ -278,16 +282,16 @@ let result=await e.DB.batch([
 e.DB.prepare('DELETE FROM assessments WHERE player_id=? AND id=? AND EXISTS(SELECT 1 FROM players WHERE id=? AND locked=0)').bind(id,assessmentId,id),
 audit(e,await session(r,e),'deleted_assessment',{...pl,assessed_at:target.assessed_at},assessmentId,null,true),
 e.DB.prepare(`UPDATE players SET (assessed_at,overall_tier,control,execution,defending,reaction_time,chemistry,game_sense,class_name,playstyle,strengths,weaknesses)=(SELECT assessed_at,overall_tier,control,execution,defending,reaction_time,chemistry,game_sense,COALESCE(class_name,''),COALESCE(playstyle,''),COALESCE(strengths,''),COALESCE(weaknesses,'') FROM assessments WHERE player_id=? ORDER BY assessed_at DESC,id DESC LIMIT 1),updated_at=? WHERE id=? AND changes()>0 AND EXISTS(SELECT 1 FROM assessments WHERE player_id=?)`).bind(id,now(),id,id),
-e.DB.prepare("UPDATE players SET assessed_at='',overall_tier='B',control=0,execution=0,defending=0,reaction_time=0,chemistry=0,game_sense=0,class_name='',playstyle='',strengths='',weaknesses='',updated_at=? WHERE id=? AND locked=0 AND NOT EXISTS(SELECT 1 FROM assessments WHERE player_id=?)").bind(now(),id,id)
+e.DB.prepare("UPDATE players SET assessed_at='',overall_tier='F',control=0,execution=0,defending=0,reaction_time=0,chemistry=0,game_sense=0,class_name='',playstyle='',strengths='',weaknesses='',updated_at=? WHERE id=? AND locked=0 AND NOT EXISTS(SELECT 1 FROM assessments WHERE player_id=?)").bind(now(),id,id)
 ]);if(!result[0].meta?.changes)return J({error:'Assessment was removed or player was locked. Nothing was deleted.'},423,o,e);return J({ok:true},200,o,e)}
 let mt=p.match(/^\/api\/players\/([^/]+)(?:\/(lock|unlock))?$/);if(!mt)return J({error:'Not found.'},404,o,e);let id=decodeURIComponent(mt[1]),act=mt[2];
-if(m==='GET'){let pl=await e.DB.prepare('SELECT * FROM players WHERE id=?').bind(id).first();if(!pl)return J({error:'Player not found.'},404,o,e);let hs=await e.DB.prepare("SELECT a.*,(SELECT l.actor_name FROM activity_logs l WHERE l.player_id=a.player_id AND l.assessment_id=a.id AND l.action IN ('created_player','updated_player') ORDER BY l.id DESC LIMIT 1) AS assessed_by FROM assessments a WHERE a.player_id=? ORDER BY a.assessed_at,a.id").bind(id).all();let avatar=await e.DB.prepare('SELECT v.skin_code FROM bonk_users u JOIN bonk_account_avatars v ON v.bonk_id=u.bonk_id WHERE u.username=? COLLATE NOCASE').bind(pl.name.trim()).first();return J({player:pl,history:hs.results,profile:{username:pl.name,avatar_code:avatar?.skin_code||null}},200,o,e)}
+if(m==='GET'){let pl=await e.DB.prepare('SELECT * FROM players WHERE id=?').bind(id).first();if(!pl)return J({error:'Player not found.'},404,o,e);let hs=await e.DB.prepare("SELECT a.*,(SELECT l.actor_name FROM activity_logs l WHERE l.player_id=a.player_id AND l.assessment_id=a.id AND l.action IN ('created_player','updated_player') ORDER BY l.id DESC LIMIT 1) AS assessed_by FROM assessments a WHERE a.player_id=? ORDER BY a.assessed_at,a.id").bind(id).all();let avatar=await e.DB.prepare('SELECT v.skin_code FROM bonk_users u JOIN bonk_account_avatars v ON v.bonk_id=u.bonk_id WHERE u.username=? COLLATE NOCASE').bind(pl.name.trim()).first();return J({player:ratedRecord(pl),history:hs.results.map(ratedRecord),profile:{username:pl.name,avatar_code:avatar?.skin_code||null}},200,o,e)}
 let q=await guard(r,e,o);if(q)return q;let pl=await e.DB.prepare('SELECT * FROM players WHERE id=?').bind(id).first();if(!pl)return J({error:'Player not found.'},404,o,e);
 if(act==='lock'&&m==='POST'){await e.DB.batch([e.DB.prepare('UPDATE players SET locked=1,updated_at=? WHERE id=?').bind(now(),id),await playerAudit(r,e,'locked_player',pl)]);return J({ok:true},200,o,e)}
 if(act==='unlock'&&m==='POST'){let b=await r.json().catch(()=>({}));let user=await session(r,e),c=await credential(e,user.id);if(!c?.code_hash||await codeHash(String(b.code||''),c.salt)!==c.code_hash)return J({error:'Administrative code is incorrect.'},403,o,e);await e.DB.batch([e.DB.prepare('UPDATE players SET locked=0,updated_at=? WHERE id=?').bind(now(),id),await playerAudit(r,e,'unlocked_player',pl)]);return J({ok:true},200,o,e)}
 if(pl.locked)return J({error:'This player is locked. Unlock it from Personal Settings first.'},423,o,e);
 if(m==='PUT'){
-let b=await r.json(),err=valid(b);if(err)return J({error:err},400,o,e);if(await duplicatePlayer(e,b.name.trim(),id))return J({error:duplicateNameError},409,o,e);
+let b=await r.json();b.overall_tier=calculatedTier(b);let err=valid(b);if(err)return J({error:err},400,o,e);if(await duplicatePlayer(e,b.name.trim(),id))return J({error:duplicateNameError},409,o,e);
 let target=null;if(!b.new_assessment){target=b.assessment_id?await e.DB.prepare('SELECT id FROM assessments WHERE player_id=? AND id=?').bind(id,Number(b.assessment_id)).first():await e.DB.prepare('SELECT id FROM assessments WHERE player_id=? ORDER BY assessed_at DESC,id DESC LIMIT 1').bind(id).first();if(!target)return J({error:'Assessment not found.'},404,o,e)}
 let user=await session(r,e),assessmentWrite=target?e.DB.prepare('UPDATE assessments SET assessed_at=?,overall_tier=?,control=?,execution=?,defending=?,reaction_time=?,chemistry=?,game_sense=?,total=?,class_name=?,playstyle=?,strengths=?,weaknesses=? WHERE player_id=? AND id=? AND changes()>0').bind(b.assessed_at,b.overall_tier,...A.map(k=>Number(b[k])),total(b),b.class_name||'',b.playstyle||'',b.strengths||'',b.weaknesses||'',id,target.id):snap(e,{...b,id},true);
 let result=await e.DB.batch([

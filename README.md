@@ -91,16 +91,47 @@ Your home IP is not used as an origin server. Visitors connect to GitHub Pages a
 The UI accepts the 0–300 attributes:
 Control, Execution, Defending, Reaction Time, Chemistry, Game Sense.
 
-Current integer tier boundaries:
-- S 257–300
-- A 215–256
-- B 172–214
-- C 129–171
-- D 86–128
-- E 43–85
-- F 0–42
+Tiers use fixed percentile boundaries calibrated on 25 November 2026 from the
+current published assessment of each of the 20 assessed players. The intended
+shares are F 5%, E 15%, D 20%, C 20%, B 20%, A 15% and S 5%.
 
-Overall Player Tier remains separate from Attribute Tier.
+The 5th, 20th, 40th, 60th, 80th and 95th percentiles use linear interpolation at
+index `(sampleSize - 1) * percentile`. Each resulting total is rounded up to the
+next integer. Drafts and older assessments do not influence this reference sample.
+
+| Tier | Individual integer attribute | Overall total |
+|---|---:|---:|
+| S | 266–300 | 1,591–1,800 |
+| A | 252–265 | 1,509–1,590 |
+| B | 238–251 | 1,427–1,508 |
+| C | 214–237 | 1,279–1,426 |
+| D | 200–213 | 1,199–1,278 |
+| E | 172–199 | 1,030–1,198 |
+| F | 0–171 | 0–1,029 |
+
+The overall tier uses the six-attribute total directly. For an individual
+attribute, compare its score multiplied by six with the same total cutoffs.
+An average can be fractional, so its exact cutoff is the total cutoff divided by
+six; do not round the average before grading it. Equal scores receive equal tiers.
+The percentages describe the calibration target, not a quota that splits tied
+players or continuously changes other players' tiers after an assessment.
+
+`ratings.js` is the shared browser and Worker definition. It records the frozen
+reference totals and calibration date. `GET /api/tier-system` returns the active
+policy. Changes require a deliberate recalibration; they do not happen on login,
+draft save or assessment creation. New and edited assessments always receive a
+server-calculated tier, including when a client submits a different tier.
+
+For an existing database, apply the tier-only backfill before deploying the Worker
+and publishing the frontend:
+
+```powershell
+npx wrangler d1 execute player-database --remote --config worker/wrangler.toml --file worker/migrations/0015_percentile_tiers.sql
+npx wrangler deploy --config worker/wrangler.toml
+```
+
+This updates tiers on existing players, all assessments and saved drafts while
+preserving scores, dates, locks, authors, draft revisions and activity logs.
 
 ## Updating
 Frontend: push changes to GitHub.

@@ -9,7 +9,7 @@ test('temporary save accepts incomplete forms; Push saves then publishes the dra
  const temporary={},submit={},status={},error={},events=[];
  const data={name:'Draft',overall_tier:''};
  const form={isConnected:true,querySelector(selector){return {'[data-save-draft]':temporary,'button[type="submit"]':submit,'[data-draft-status]':status,'[data-tier-error]':error,'[data-assessment-tier]':{focus(){}}}[selector]||null}};
- const context=vm.createContext({document:{querySelector:()=>form},wireTierSelect(){},wireAutomaticTier(){data.overall_tier='F'},A:[],FormData:class{constructor(){return Object.entries(data)}},
+ const context=vm.createContext({document:{querySelector:()=>form},wireAutomaticTier(){data.overall_tier='F'},calculatedPlayerTier:()=> 'F',A:[],FormData:class{constructor(){return Object.entries(data)}},
   savePlayerDraft:async(form,state)=>{events.push('save draft');state.id='draft-id';state.revision=2},
   api:async(path,options)=>{events.push(path);assert.equal(JSON.parse(options.body).revision,2)},
   msg(){},adminTab:()=>events.push('players tab')});
@@ -23,6 +23,46 @@ test('temporary save accepts incomplete forms; Push saves then publishes the dra
  data.overall_tier='S';
  await form.onsubmit({preventDefault(){}});
  assert.deepEqual(events,['save draft','save draft','save draft','/api/player-drafts/draft-id/push','players tab']);
+});
+
+test('existing assessments calculate their tier on submit instead of trusting a saved selection',async()=>{
+ const source=readFileSync(new URL('../../app.js',import.meta.url),'utf8');
+ const code=source.slice(source.indexOf('function wireForm('),source.indexOf('\nasync function edit(',source.indexOf('function wireForm(')));
+ const keys=['control','execution','defending','reaction_time','chemistry','game_sense'];
+ for(const isNew of [false,true]){
+  const data={name:'Player',overall_tier:'S',...Object.fromEntries(keys.map(key=>[key,'200']))};
+  const submit={},calls=[];
+  const form={isConnected:true,querySelector:selector=>selector==='button[type="submit"]'?submit:null};
+  let automatic=0;
+  const context=vm.createContext({document:{querySelector:()=>form},wireAutomaticTier(){automatic++},calculatedPlayerTier:()=> 'D',A:keys.map(key=>[key]),FormData:class{constructor(){return Object.entries(data)}},setInterval(){return 0},
+   api:async(path,options)=>calls.push({path,options}),msg(){},adminPlayerAssessments:id=>calls.push(id)});
+  vm.runInContext(code,context);
+  context.wireForm('existing',7,isNew);
+  await form.onsubmit({preventDefault(){}});
+  assert.equal(automatic,1);
+  assert.equal(calls[0].path,'/api/players/existing');
+  assert.equal(calls[0].options.method,'PUT');
+  const submitted=JSON.parse(calls[0].options.body);
+  assert.equal(submitted.overall_tier,'D');
+  assert.equal(submitted.control,200);
+  if(isNew)assert.equal(submitted.new_assessment,true);
+  else assert.equal(submitted.assessment_id,7);
+ }
+});
+
+test('existing assessment and draft forms display a calculated read-only tier',()=>{
+ const source=readFileSync(new URL('../../app.js',import.meta.url),'utf8');
+ const picker=source.slice(source.indexOf('function tierSelect('),source.indexOf('function calculatedPlayerTier('));
+ const form=source.slice(source.indexOf('function form('),source.indexOf('function selectAdminTab('));
+ const context=vm.createContext({esc:String,A:[],field:()=>'',classSelect:()=>'',localToday:()=> '2026-11-25',calculatedPlayerTier:()=> 'D'});
+ vm.runInContext(picker+'\n'+form,context);
+ for(const input of [{id:'existing',overall_tier:'S'},{overall_tier:'S'},{}]){
+  const html=context.form(input);
+  assert.match(html,/name="overall_tier" value="D"/);
+  assert.equal((html.match(/data-assessment-tier="[SABCDEF]" disabled/g)||[]).length,7);
+  assert.match(html,/data-assessment-tier="D" disabled aria-pressed="true"/);
+  assert.doesNotMatch(html,/Select one tier|Click it again to clear/);
+ }
 });
 
 test('other admins preview read-only; authors can confirm or cancel discarding',async()=>{
@@ -43,16 +83,33 @@ test('other admins preview read-only; authors can confirm or cancel discarding',
 });
 
 
-test('automatic new-player tiers use six attributes and update on input',()=>{
+test('draft saving replaces an obsolete hidden tier with the calculated tier',async()=>{
+ const data={name:'Saved draft',overall_tier:'S',control:'200'};
+ const state={id:'draft',revision:2};
+ let submitted;
+ const context=vm.createContext({FormData:class{constructor(){return Object.entries(data)}},calculatedPlayerTier:values=>{assert.equal(values.control,'200');return 'D'},
+  api:async(path,options)=>{submitted={path,options};return {id:'draft',revision:3}}});
+ vm.runInContext(readFileSync(new URL('../../drafts.js',import.meta.url),'utf8'),context);
+ await context.savePlayerDraft({},state);
+ assert.equal(submitted.path,'/api/player-drafts/draft');
+ assert.equal(JSON.parse(submitted.options.body).data.overall_tier,'D');
+ assert.equal(state.revision,3);
+});
+
+test('automatic player tiers use all six attributes at every calibrated boundary and update on input',()=>{
  const source=readFileSync(new URL('../../app.js',import.meta.url),'utf8');
  const tierLine=source.split('\n').find(line=>line.startsWith('const tier='));
  const helper=source.slice(source.indexOf('function calculatedPlayerTier('),source.indexOf('function form('));
  const keys=['control','execution','defending','reaction_time','chemistry','game_sense'];
- const fields=Object.fromEntries(keys.map(key=>[key,{value:'256',addEventListener(event,handler){this.update=handler}}]));
+ const fields=Object.fromEntries(keys.map(key=>[key,{value:'200',addEventListener(event,handler){this.update=handler}}]));
  const input={},buttons='SABCDEF'.split('').map(rank=>({dataset:{assessmentTier:rank},setAttribute(key,value){this[key]=value}}));
- const ctx=vm.createContext({A:keys.map(key=>[key])});vm.runInContext(tierLine+'\n'+helper,ctx);
- for(const [score,expected] of [[0,'F'],[43,'E'],[86,'D'],[129,'C'],[172,'B'],[215,'A'],[256,'A'],[257,'S'],[300,'S']])assert.equal(ctx.calculatedPlayerTier(Object.fromEntries(keys.map(key=>[key,score]))),expected);
+ const ctx=vm.createContext({A:keys.map(key=>[key])});
+ vm.runInContext(readFileSync(new URL('../../ratings.js',import.meta.url),'utf8'),ctx);
+ vm.runInContext(tierLine+'\n'+helper,ctx);
+ const scores=total=>Object.fromEntries(keys.map((key,index)=>[key,Math.floor(total/6)+(index<total%6?1:0)]));
+ for(const [total,expected] of [[0,'F'],[1029,'F'],[1030,'E'],[1198,'E'],[1199,'D'],[1278,'D'],[1279,'C'],[1426,'C'],[1427,'B'],[1508,'B'],[1509,'A'],[1590,'A'],[1591,'S'],[1800,'S']])assert.equal(ctx.calculatedPlayerTier(scores(total)),expected);
  const form={querySelector(selector){if(selector==='[name="overall_tier"]')return input;return fields[selector.match(/name="([^"]+)"/)[1]]},querySelectorAll:()=>buttons};
- ctx.wireAutomaticTier(form);assert.equal(input.value,'A');
- for(const field of Object.values(fields))field.value='257';fields.control.update();assert.equal(input.value,'S');assert.equal(buttons.filter(b=>b['aria-pressed']).length,1);
+ ctx.wireAutomaticTier(form);assert.equal(input.value,'D');
+ for(const [key,value] of Object.entries(scores(1591)))fields[key].value=String(value);
+ fields.control.update();assert.equal(input.value,'S');assert.equal(buttons.filter(b=>b['aria-pressed']).length,1);
 });

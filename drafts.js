@@ -41,6 +41,7 @@ function openPlayerDraft(draft,accountId){
 
 async function savePlayerDraft(form,state){
  const data=Object.fromEntries(new FormData(form));
+ data.overall_tier=calculatedPlayerTier(data);
  const result=await api('/api/player-drafts'+(state.id?'/'+encodeURIComponent(state.id):''),{method:state.id?'PUT':'POST',body:JSON.stringify({data,revision:state.revision})});
  state.id=result.id;state.revision=result.revision;
  return result;
