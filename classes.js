@@ -41,11 +41,14 @@ function openClassDetails(c,opener){
     const dialog = document.createElement('dialog');
     dialog.className = 'class-dialog';
     dialog.setAttribute('aria-labelledby', 'classDialogTitle');
-    dialog.innerHTML = `<div class="app-dialog-heading"><h2 id="classDialogTitle" tabindex="-1"></h2><button type="button" class="secondary dialog-dismiss" data-class-close>&times;</button></div><figure class="class-example"><div class="class-video-stage"></div><figcaption class="class-dialog-body"></figcaption></figure>`;
+    dialog.setAttribute('aria-describedby', 'classDialogSummary');
+    dialog.innerHTML = `<div class="class-dialog-controls"><button type="button" class="secondary dialog-dismiss" data-class-close><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div><figure class="class-example"><div class="class-video-stage"></div><figcaption class="class-dialog-body"><h2 id="classDialogTitle" tabindex="-1"></h2><p id="classDialogSummary" class="class-dialog-summary"></p><div class="class-dialog-description"></div></figcaption></figure>`;
     const title = dialog.querySelector('#classDialogTitle');
     const close = dialog.querySelector('[data-class-close]');
     const videoStage = dialog.querySelector('.class-video-stage');
     const body = dialog.querySelector('.class-dialog-body');
+    const summary = dialog.querySelector('#classDialogSummary');
+    const description = dialog.querySelector('.class-dialog-description');
 
     function relationshipGroup(label, type, entries) {
         return `<section class="class-relationship-group" data-relationship="${type}" aria-labelledby="classRelationship-${type}"><h4 id="classRelationship-${type}">${label}</h4><ul>${entries.map(entry => {
@@ -57,17 +60,16 @@ function openClassDetails(c,opener){
     function showDetails(playstyle, switching = false) {
         videoStage.querySelector('video')?.pause();
         title.textContent = playstyle.name;
+        summary.textContent = playstyle.summary;
         close.setAttribute('aria-label', `Close ${playstyle.name} details`);
-        videoStage.innerHTML = playstyle.video
-            ? `<video controls playsinline preload="metadata" aria-label="${esc(playstyle.name)} example"><source src="${esc(playstyle.video)}" type="${esc(playstyle.videoType)}">Your browser does not support this video. <a href="${esc(playstyle.video)}">Download the example</a>.</video>`
-            : '<div class="class-video-placeholder"><span aria-hidden="true">&#9654;</span><strong>Example video coming soon</strong><p>An example clip will be added here.</p></div>';
+        videoStage.innerHTML = `<video controls playsinline preload="none" aria-label="${esc(playstyle.name)} example">${playstyle.video ? `<source src="${esc(playstyle.video)}" type="${esc(playstyle.videoType)}">` : ''}Your browser does not support this video.</video>${playstyle.video ? '' : '<p class="class-video-placeholder">Video not available yet</p>'}`;
         const strong = CLASS_MATCHUPS.filter(matchup => matchup.strong === playstyle.name)
             .map(matchup => ({ name: matchup.weak, reason: matchup.reason }));
         const weak = CLASS_MATCHUPS.filter(matchup => matchup.weak === playstyle.name)
             .map(matchup => ({ name: matchup.strong, reason: matchup.reason }));
         const teammates = CLASS_PARTNERSHIPS.filter(pair => pair.names.includes(playstyle.name))
             .map(pair => ({ name: pair.names.find(name => name !== playstyle.name), reason: pair.reason }));
-        body.innerHTML = `${playstyle.detail ? `<p>${esc(playstyle.detail)}</p>` : ''}<p><strong>In attack:</strong> ${esc(playstyle.attack)}</p><p><strong>In defence:</strong> ${esc(playstyle.defence)}</p><p class="meta">${esc(playstyle.example)}</p><section class="class-relationships" aria-labelledby="classRelationshipsTitle"><h3 id="classRelationshipsTitle">Matchups &amp; teammates</h3><p class="meta">Potential matchups and pairings. Position, teammates and individual skill can change how they play out.</p><div class="class-relationships-grid">${relationshipGroup('Strong against', 'strong', strong)}${relationshipGroup('Weak against', 'weak', weak)}${relationshipGroup('Works well with', 'teammates', teammates)}</div></section>`;
+        description.innerHTML = `<div class="class-dialog-columns"><section class="class-dialog-section"><h3>Offence</h3><p>${esc(playstyle.attack)}</p></section><section class="class-dialog-section"><h3>Defence</h3><p>${esc(playstyle.defence)}</p></section></div><section class="class-dialog-tip"><h3>What to watch for</h3>${playstyle.detail ? `<p>${esc(playstyle.detail)}</p>` : ''}<p>${esc(playstyle.example)}</p></section><section class="class-relationships" aria-labelledby="classRelationshipsTitle"><h3 id="classRelationshipsTitle">Matchups &amp; teammates</h3><p class="meta">Potential matchups and pairings. Position, teammates and individual skill can change how they play out.</p><div class="class-relationships-grid">${relationshipGroup('Strong against', 'strong', strong)}${relationshipGroup('Weak against', 'weak', weak)}${relationshipGroup('Works well with', 'teammates', teammates)}</div></section>`;
         body.scrollTop = 0;
         if (switching) title.focus({ preventScroll: true });
     }
