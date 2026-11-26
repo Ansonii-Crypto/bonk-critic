@@ -57,7 +57,11 @@ async function join(env, name = 'Player', {identity = null, extra = {}, path = '
 async function connect(env, data, headers = {}) {
     const response = await request(env, data.socketPath.replace('/api/football', ''), undefined, null, {Upgrade:'websocket', ...headers}); assert.equal(response.status, 101); return response.webSocket;
 }
-async function member(env, name, identity = null) {const {response, data} = await join(env, name, {identity}); assert.equal(response.status, 200); const socket = await connect(env, data); return {...data, socket};}
+async function member(env, name, identity = null, {vote = true} = {}) {
+    const {response, data} = await join(env, name, {identity}); assert.equal(response.status, 200); const socket = await connect(env, data), result = {...data, socket};
+    if (vote && roomOf(env).room.status === 'voting') await command(roomOf(env), result, {type:'modeVote', mode:'balanced'});
+    return result;
+}
 const roomOf = env => env.objects.get(ID);
 const roster = (room, data) => room.room.members.find(item => item.id === data.member.id);
 async function command(room, data, message) {await room.message(room.connections.get(data.member.id), JSON.stringify(message));}
@@ -65,6 +69,12 @@ function cleanup(env) {for (const room of env.objects.values()) room.stopTimer()
 async function match(env, count = 2) {
     const members = []; for (let i = 0; i < count; i++) members.push(await member(env, 'Player ' + i));
     const room = roomOf(env); for (const data of members) await command(room, data, {type:'ready', ready:true}); room.stopTimer(); assert.equal(room.room.status, 'playing'); return {room, members};
+}
+async function rocketsMatch(env, count = 2) {
+    const members = []; for (let i = 0; i < count; i++) members.push(await member(env, 'Rocket ' + i, null, {vote:false}));
+    const room = roomOf(env); for (const data of members) await command(room, data, {type:'modeVote', mode:'rockets'});
+    for (const data of members) await command(room, data, {type:'ready', ready:true});
+    room.stopTimer(); assert.equal(room.room.status, 'playing'); assert.equal(room.room.mode, 'rockets'); return {room, members};
 }
 
 test('all legacy room links and lobby requests resolve to one guest-safe shared hub', async () => {
@@ -83,7 +93,7 @@ test('first guests have no admin power; balanced players ready up to auto-start'
     const env = environment();
     try {
         const first = await member(env, 'First'), second = await member(env, 'Second'), room = roomOf(env);
-        assert.equal(roster(room, first).team, 2); assert.equal(roster(room, second).team, 3);
+        assert.equal(roster(room, first).team, 3); assert.equal(roster(room, second).team, 2);
         for (const type of ['settings', 'start', 'abort', 'kick', 'assign']) await command(room, first, {type, settings:{scoreLimit:1}, memberId:second.member.id, team:2});
         assert.equal(room.room.settings.scoreLimit, 3); assert.equal(room.room.members.length, 2); assert.equal(room.room.status, 'lobby');
         await command(room, first, {type:'ready', ready:true}); assert.equal(room.room.status, 'lobby');
@@ -137,18 +147,19 @@ test('64 member capacity allows only four active players per side and FIFO queue
         assert.equal(view.members.filter(item => item.team === 2).length, 4); assert.equal(view.members.filter(item => item.team === 3).length, 4);
         assert.deepEqual(view.members.filter(item => item.queued).map(item => item.queuePosition), Array.from({length:56}, (_, i) => i + 1));
         assert.equal((await join(env, 'Overflow')).response.status, 409);
-        await command(room, people[0], {type:'spectate'}); assert.equal(roster(room, people[0]).queuePosition, undefined); assert.equal(roster(room, people[8]).team, 2);
+        await command(room, people[0], {type:'spectate'}); assert.equal(roster(room, people[0]).queuePosition, undefined); assert.equal(roster(room, people[8]).team, 3);
         assert.equal(room.publicRoom().members.find(item => item.id === people[0].member.id).queuePosition, null);
     } finally {cleanup(env);}
 });
 
-test('team preferences honor FIFO and active opt-out creates a fair queue vacancy', async () => {
+test('balanced mode preserves a fair queue and keeps sides within one player after opt-out', async () => {
     const env = environment();
     try {
         const people = []; for (let i = 0; i < 10; i++) people.push(await member(env, 'P' + i)); const room = roomOf(env);
         await command(room, people[8], {type:'queue', team:3}); await command(room, people[9], {type:'queue', team:2});
-        await command(room, people[0], {type:'spectate'}); assert.equal(roster(room, people[9]).team, 2); assert.equal(roster(room, people[8]).queued, true);
-        await command(room, people[1], {type:'spectate'}); assert.equal(roster(room, people[8]).team, 3);
+        await command(room, people[0], {type:'spectate'}); assert.ok(roster(room, people[8]).team); assert.equal(roster(room, people[9]).queued, true);
+        await command(room, people[1], {type:'spectate'}); assert.ok(roster(room, people[9]).team);
+        assert.ok(Math.abs(room.room.members.filter(item => item.team === 2).length - room.room.members.filter(item => item.team === 3).length) <= 1);
     } finally {cleanup(env);}
 });
 
@@ -165,12 +176,14 @@ test('queued and spectating arrivals cannot reset active readiness', async () =>
     } finally {cleanup(env);}
 });
 
-test('changing finished-match settings clears its old field preview and preserves the result', async () => {
+test('results transition into voting, then settings clear the old field preview and preserve the result', async () => {
     const env = environment();
     try {
         const admin = await member(env, 'Admin', await administrator(env)), player = await member(env, 'Player'), room = roomOf(env);
         await command(room, admin, {type:'start'}); room.stopTimer(); room.room.state.fte = 0; room.room.state.scores[2] = 3; room.tick();
         const result = structuredClone(room.room.lastResult);
+        assert.equal(room.room.status, 'results'); room.room.results.deadline = Date.now() - 1; await room.alarm();
+        await command(room, admin, {type:'modeVote', mode:'balanced'}); await command(room, player, {type:'modeVote', mode:'balanced'});
         await command(room, admin, {type:'settings', settings:{pitchWidth:900}});
         assert.equal(room.room.status, 'lobby'); assert.equal(room.room.state, null); assert.equal(room.room.winner, null); assert.equal(room.room.settings.pitchWidth, 900); assert.deepEqual(room.room.lastResult, result);
     } finally {cleanup(env);}
@@ -182,19 +195,21 @@ test('live arrivals wait until the next kickoff and retain existing players, sco
         const {room, members} = await match(env), arrival = await member(env, 'Queued');
         assert.equal(roster(room, arrival).queued, true); assert.equal(roster(room, arrival).team, 0); assert.equal(room.room.state.discs[2], undefined);
         room.room.state.fte = 0; room.room.state.scores[2] = 1; room.tick();
-        assert.equal(roster(room, arrival).queued, false); assert.equal(roster(room, arrival).team, 2); assert.equal(room.room.state.ftu, 120); assert.equal(room.room.state.scores[2], 1);
+        assert.equal(roster(room, arrival).queued, false); assert.ok(roster(room, arrival).team); assert.equal(room.room.state.ftu, 120); assert.equal(room.room.state.scores[2], 1);
         assert.equal(room.room.state.players[0].id, roster(room, members[0]).slot); assert.equal(room.room.state.players[2].name, 'Queued');
     } finally {cleanup(env);}
 });
 
-test('winning score resolves before reset and finished players may ready for a rematch', async () => {
+test('winning score resolves before reset and results/voting precede the next ready match', async () => {
     const env = environment();
     try {
         const {room, members} = await match(env); room.room.settings.scoreLimit = 1;
         room.room.state.ftu = -1; room.room.state.ball.x = 29 / 11; room.room.state.ball.xv = -1; room.tick();
         assert.equal(room.room.state.scores[2], 1); assert.equal(room.room.state.fte, 90);
         for (let i = 0; i < 90; i++) room.tick(); assert.equal(room.room.status, 'playing'); room.tick();
-        assert.equal(room.room.status, 'finished'); assert.equal(room.room.winner, 2); const result = structuredClone(room.room.lastResult);
+        assert.equal(room.room.status, 'results'); assert.equal(room.room.winner, 2); const result = structuredClone(room.room.lastResult);
+        room.room.results.deadline = Date.now() - 1; await room.alarm(); assert.equal(room.room.status, 'voting');
+        for (const data of members) await command(room, data, {type:'modeVote', mode:'balanced'});
         await command(room, members[0], {type:'ready', ready:true}); await command(room, members[1], {type:'ready', ready:true}); room.stopTimer();
         assert.equal(room.room.status, 'playing'); assert.deepEqual(room.room.state.scores, [0, 0, 0, 0]); assert.deepEqual(room.room.lastResult, result);
     } finally {cleanup(env);}
@@ -252,14 +267,15 @@ test('idle cleanup and cold checkpoints preserve shared admin settings and relea
     } finally {cleanup(env);}
 });
 
-test('heartbeat alarms reap silent sockets and grace expiry aborts an empty team; active input avoids alarm writes', async () => {
+test('heartbeat grace expires into a rebalance poll while remaining players continue; active input avoids alarm writes', async () => {
     const env = environment();
     try {
         const {room, members} = await match(env), connection = room.connections.get(members[0].member.id), alarm = room.ctx.storage.alarm;
         connection.lastMessageAt = Date.now() - LIMITS.HEARTBEAT_TTL - 1; await command(room, members[0], {type:'input', seq:1, flags:0}); assert.equal(room.ctx.storage.alarm, alarm);
         await room.alarm(); assert.equal(members[0].socket.closed, false);
         connection.lastMessageAt = Date.now() - LIMITS.HEARTBEAT_TTL - 1; await room.alarm(); assert.equal(members[0].socket.closed, true);
-        roster(room, members[0]).disconnectedAt = Date.now() - LIMITS.RESUME_GRACE - 1; await room.alarm(); assert.equal(room.room.status, 'lobby'); assert.equal(room.room.members.length, 1);
+        roster(room, members[0]).disconnectedAt = Date.now() - LIMITS.RESUME_GRACE - 1; await room.alarm(); assert.equal(room.room.status, 'playing'); assert.equal(room.room.members.length, 1); assert.ok(room.room.rebalanceVote);
+        await command(room, members[1], {type:'rebalanceVote', yes:true}); assert.equal(room.room.rebalanceVote, null); assert.equal(room.room.state.ftu, 120);
     } finally {cleanup(env);}
 });
 
@@ -272,5 +288,194 @@ test('kick invalidates resume, chat limits preserve readiness, and oversized/flo
         await command(room, admin, {type:'kick', memberId:player.member.id}); assert.equal(player.socket.closed, true); assert.equal((await join(env, 'Player', {extra:{resumeToken:player.member.resumeToken}})).response.status, 403);
         const large = await member(env, 'Large'); await command(room, large, {type:'ping', padding:'x'.repeat(1100)}); assert.equal(large.socket.closed, true);
         const flood = await member(env, 'Flood'); for (let i = 0; i < 120 && room.connections.has(flood.member.id); i++) await command(room, flood, {type:'ping', sentAt:i}); assert.equal(flood.socket.closed, true);
+    } finally {cleanup(env);}
+});
+
+test('mode voting is server-timed, has one vote per eligible member, and excludes watchers', async () => {
+    const env = environment();
+    try {
+        const first = await member(env, 'First', null, {vote:false}), second = await member(env, 'Second', null, {vote:false}), watcher = await member(env, 'Watch', null, {vote:false}), room = roomOf(env);
+        await command(room, watcher, {type:'spectate'}); assert.equal(room.room.status, 'voting'); const deadline = room.room.vote.deadline;
+        await command(room, watcher, {type:'modeVote', mode:'rockets'}); assert.deepEqual(room.publicRoom().vote.counts, {balanced:0, rockets:0});
+        await command(room, first, {type:'modeVote', mode:'balanced', memberId:second.member.id, deadline:0});
+        await command(room, first, {type:'modeVote', mode:'rockets'}); assert.equal(room.room.vote.deadline, deadline); assert.deepEqual(room.publicRoom().vote.counts, {balanced:0, rockets:1});
+        assert.equal(room.room.status, 'voting'); await command(room, second, {type:'modeVote', mode:'rockets'});
+        assert.equal(room.room.status, 'lobby'); assert.equal(room.room.mode, 'rockets'); assert.equal(room.room.vote, null);
+    } finally {cleanup(env);}
+});
+
+test('a single player may vote and start balanced practice, and timed votes resolve without client timers', async () => {
+    const env = environment();
+    try {
+        const solo = await member(env, 'Solo', null, {vote:false}), room = roomOf(env); assert.equal(room.room.status, 'voting');
+        room.room.vote.deadline = Date.now() - 1; await room.alarm(); assert.equal(room.room.status, 'lobby'); assert.equal(room.room.mode, 'balanced'); assert.equal(room.canStart(), true);
+        await command(room, solo, {type:'ready', ready:true}); room.stopTimer(); assert.equal(room.room.status, 'playing'); assert.equal(room.room.state.discs.filter(Boolean).length, 1);
+    } finally {cleanup(env);}
+});
+
+test('empty votes stop and a watcher joining the queue opens a fresh initial vote', async () => {
+    const env = environment();
+    try {
+        const solo = await member(env, 'Solo', null, {vote:false}), room = roomOf(env);
+        await command(room, solo, {type:'spectate'}); assert.equal(room.room.status, 'lobby'); assert.equal(room.room.vote, null);
+        await command(room, solo, {type:'queue', team:0}); assert.equal(room.room.status, 'voting'); assert.ok(room.room.vote.deadline > Date.now());
+    } finally {cleanup(env);}
+});
+
+test('results with no connected participants clear their elapsed deadline and leave no repeating alarm', async () => {
+    const env = environment();
+    try {
+        const {room, members} = await match(env, 1); room.finishGame(3);
+        members[0].socket.close(1001, 'gone'); room.room.results.deadline = Date.now() - 1; await room.alarm();
+        assert.equal(room.room.status, 'lobby'); assert.equal(room.room.results, null); assert.equal(room.room.vote, null); assert.equal(room.room.state, null);
+        roster(room, members[0]).disconnectedAt = Date.now() - LIMITS.RESUME_GRACE - 1; await room.alarm();
+        assert.equal(room.room.members.length, 0); assert.equal(room.ctx.storage.alarm, null); assert.ok(room.room.lastResult);
+    } finally {cleanup(env);}
+});
+
+test('rebalance yes resets at kickoff with scores intact, while no and timeout preserve live assignments', async () => {
+    const env = environment();
+    try {
+        const {room, members} = await match(env, 3); room.room.state.ftu = -1; room.room.state.scores[2] = 1;
+        await command(room, members[0], {type:'leave'}); assert.equal(room.room.status, 'playing'); assert.ok(room.room.rebalanceVote);
+        const before = room.room.state, teams = room.room.members.map(item => [item.id, item.team]);
+        await command(room, members[1], {type:'rebalanceVote', yes:false}); await command(room, members[2], {type:'rebalanceVote', yes:false});
+        assert.equal(room.room.rebalanceVote, null); assert.equal(room.room.state, before); assert.deepEqual(room.room.members.map(item => [item.id, item.team]), teams);
+        room.room.state.fte = 0; room.tick(); assert.deepEqual(room.room.members.map(item => [item.id, item.team]), teams); assert.equal(room.room.state.scores[2], 1);
+        const afterKickoff = room.room.state;
+        room.openRebalanceVote(); room.room.rebalanceVote.deadline = Date.now() - 1; await room.alarm(); assert.equal(room.room.state, afterKickoff); assert.equal(room.room.rebalanceVote, null);
+        room.openRebalanceVote(); await command(room, members[1], {type:'rebalanceVote', yes:true}); await command(room, members[2], {type:'rebalanceVote', yes:true});
+        assert.equal(room.room.rebalanceVote, null); assert.equal(room.room.state.ftu, 120); assert.equal(room.room.state.scores[2], 1);
+        assert.ok(Math.abs(room.room.members.filter(item => item.team === 2).length - room.room.members.filter(item => item.team === 3).length) <= 1);
+    } finally {cleanup(env);}
+});
+
+test('solo Rockets excludes countdown from its 900 active ticks and records native goal speed in m/s only once', async () => {
+    const env = environment();
+    try {
+        const {room, members} = await rocketsMatch(env, 1); assert.equal(room.publicRoom().rockets.attackerId, members[0].member.id); assert.equal(roster(room, members[0]).team, 3);
+        for (let frame = 0; frame < 121; frame++) room.tick(); assert.equal(room.room.state.ftu, -1); assert.equal(room.room.rockets.turnTicksLeft, 900);
+        room.room.state.ball.x = 701 / 11; room.room.state.ball.xv = 20; room.tick();
+        assert.equal(room.room.rockets.turnTicksLeft, 899); assert.equal(room.room.state.fte, 90); assert.equal(room.room.rockets.turnEnded, true);
+        const board = room.publicRoom().rockets.leaderboard; assert.equal(board[0].scored, true); assert.ok(Math.abs(board[0].speed - 19.6) < .000001); assert.equal(room.publicRoom().rockets.unit, 'm/s');
+        assert.equal(room.room.chat.filter(item => item.system).length, 1); assert.equal(room.room.chat.at(-1).text, 'Rocket 0 reached 19.6 m/s.');
+        for (let frame = 0; frame < 90; frame++) room.tick(); assert.equal(room.room.rockets.turnTicksLeft, 899); room.tick();
+        assert.equal(room.room.status, 'results'); assert.equal(room.room.results.winnerId, members[0].member.id); assert.equal(room.room.results.unit, 'm/s'); assert.equal(room.room.chat.filter(item => item.system).length, 1);
+    } finally {cleanup(env);}
+});
+
+test('Rockets turns rotate through every participant, cap defenders at four, and queue late arrivals for the next game', async () => {
+    const env = environment();
+    try {
+        const {room, members} = await rocketsMatch(env, 6), late = await member(env, 'Late');
+        assert.equal(room.room.rockets.participantIds.includes(late.member.id), false); assert.equal(roster(room, late).queued, true);
+        const seen = [];
+        for (let turn = 0; turn < 6; turn++) {
+            seen.push(room.room.rockets.attackerId); assert.equal(room.publicRoom().rockets.turnIndex, turn + 1); assert.equal(room.room.members.filter(item => item.team === 3).length, 1); assert.equal(room.room.members.filter(item => item.team === 2).length, 4);
+            room.room.state.ftu = -1; room.room.rockets.turnTicksLeft = 1; room.tick();
+        }
+        assert.deepEqual(seen, members.map(data => data.member.id)); assert.equal(room.room.status, 'results'); assert.equal(room.room.results.leaderboard.length, 6); assert.ok(room.room.results.leaderboard.every(row => !row.scored));
+        assert.equal(room.room.chat.filter(item => item.system).length, 0); assert.equal(room.room.results.winnerId, null);
+    } finally {cleanup(env);}
+});
+
+test('Rockets queued participants must ready up and are listed in the public fixed roster', async () => {
+    const env = environment();
+    try {
+        const people = []; for (let i = 0; i < 10; i++) people.push(await member(env, 'Rocket ' + i, null, {vote:false})); const room = roomOf(env);
+        for (const data of people) await command(room, data, {type:'modeVote', mode:'rockets'});
+        for (const data of people.slice(0, 9)) await command(room, data, {type:'ready', ready:true});
+        assert.equal(room.room.status, 'lobby'); assert.equal(roster(room, people[9]).queued, true);
+        await command(room, people[9], {type:'ready', ready:true}); room.stopTimer(); assert.equal(room.room.status, 'playing');
+        assert.deepEqual(room.publicRoom().rockets.participantIds, people.map(data => data.member.id)); assert.equal(room.publicRoom().rockets.totalTurns, 10);
+    } finally {cleanup(env);}
+});
+
+test('Rockets red goals do not announce a shot; role changes skip the attacker and remove departed records', async () => {
+    const env = environment();
+    try {
+        const {room, members} = await rocketsMatch(env, 3);
+        room.room.state.ftu = -1; room.room.state.ball.x = 29 / 11; room.room.state.ball.xv = -20; room.tick();
+        assert.equal(room.room.state.lscr, 2); assert.equal(room.room.chat.filter(item => item.system).length, 0);
+        for (let frame = 0; frame < 91; frame++) room.tick(); assert.equal(room.room.rockets.attackerId, members[1].member.id); assert.equal(room.publicRoom().rockets.leaderboard.find(row => row.id === members[0].member.id).scored, false);
+        await command(room, members[1], {type:'spectate'}); assert.equal(room.room.rockets.attackerId, members[2].member.id); assert.equal(room.room.rockets.totalTurns, 2); assert.equal(roster(room, members[1]).queued, false); assert.equal(room.publicRoom().rockets.leaderboard.some(row => row.id === members[1].member.id), false);
+        await command(room, members[0], {type:'queue', team:0}); assert.equal(room.room.rockets.participantIds.includes(members[0].member.id), false); assert.equal(roster(room, members[0]).queued, true); assert.equal(room.publicRoom().rockets.leaderboard.length, 1);
+        await command(room, members[2], {type:'leave'}); assert.notEqual(room.room.status, 'playing'); assert.equal(room.room.rockets, null);
+    } finally {cleanup(env);}
+});
+
+test('expired mode and rebalance votes reject late socket messages before an alarm runs', async () => {
+    const env = environment();
+    try {
+        const first = await member(env, 'First', null, {vote:false}), second = await member(env, 'Second', null, {vote:false}), room = roomOf(env);
+        room.room.vote.deadline = Date.now() - 1;
+        await command(room, first, {type:'modeVote', mode:'rockets'});
+        assert.equal(room.room.status, 'lobby'); assert.equal(room.room.mode, 'balanced'); assert.ok(first.socket.received.some(message => /vote has ended/.test(message.error || '')));
+        await command(room, first, {type:'ready', ready:true}); await command(room, second, {type:'ready', ready:true}); room.stopTimer(); room.room.state.ftu = -1;
+        await command(room, first, {type:'leave'}); room.room.rebalanceVote.deadline = Date.now() - 1; const state = room.room.state;
+        await command(room, second, {type:'rebalanceVote', yes:true});
+        assert.equal(room.room.rebalanceVote, null); assert.equal(room.room.balanceDeferred, true); assert.equal(room.room.state, state); assert.equal(room.room.state.ftu, -1);
+    } finally {cleanup(env);}
+});
+
+test('a disconnected Rockets attacker immediately withdraws without a ghost disc and resumes only into the next-game queue', async () => {
+    const env = environment();
+    try {
+        const {room, members} = await rocketsMatch(env, 3), attacker = members[0], slot = roster(room, attacker).slot;
+        room.room.state.ftu = -1; room.room.state.ball.x = 701 / 11; room.room.state.ball.xv = 20; room.tick();
+        assert.equal(room.publicRoom().rockets.leaderboard.find(row => row.id === attacker.member.id).scored, true);
+        attacker.socket.close(1001, 'network lost');
+        assert.equal(room.room.rockets.attackerId, members[1].member.id); assert.equal(roster(room, attacker).team, 0); assert.equal(roster(room, attacker).queued, true); assert.equal(roster(room, attacker).connected, false);
+        assert.equal(room.publicRoom().rockets.leaderboard.some(row => row.id === attacker.member.id), false); assert.equal(room.room.state.discs[slot] || null, null); assert.equal(room.room.state.players[slot] || null, null);
+        const resumed = (await join(env, 'Ignored', {extra:{resumeToken:attacker.member.resumeToken}})).data; await connect(env, resumed);
+        assert.equal(resumed.member.id, attacker.member.id); assert.equal(roster(room, attacker).connected, true); assert.equal(roster(room, attacker).team, 0); assert.equal(roster(room, attacker).queued, true);
+        assert.equal(room.room.rockets.participantIds.includes(attacker.member.id), false); assert.equal(room.room.state.discs[slot] || null, null);
+    } finally {cleanup(env);}
+});
+
+test('a Rockets defender disconnect removes its disc while connection replacement retains the active attacker', async () => {
+    const env = environment();
+    try {
+        const {room, members} = await rocketsMatch(env, 3), attacker = members[0], defender = members[1], slot = roster(room, defender).slot;
+        const replaced = (await join(env, 'Ignored', {extra:{resumeToken:attacker.member.resumeToken}})).data; await connect(env, replaced);
+        assert.equal(room.room.rockets.attackerId, attacker.member.id); assert.equal(room.room.rockets.participantIds.includes(attacker.member.id), true); assert.equal(roster(room, attacker).team, 3);
+        room.room.state.ftu = -1; defender.socket.close(1001, 'network lost'); room.tick();
+        assert.equal(roster(room, defender).team, 0); assert.equal(roster(room, defender).queued, true); assert.equal(room.room.rockets.participantIds.includes(defender.member.id), false); assert.equal(room.room.state.discs[slot] || null, null); assert.equal(room.room.rockets.attackerId, attacker.member.id);
+    } finally {cleanup(env);}
+});
+
+test('departing Rockets results leaders disappear from the board and cannot remain its winner', async () => {
+    const env = environment();
+    try {
+        const {room, members} = await rocketsMatch(env, 2), leader = members[0], other = members[1];
+        room.room.rockets.records[leader.member.id] = {scored:true, speed:20, timeTicks:10}; room.room.rockets.records[other.member.id] = {scored:true, speed:10, timeTicks:20}; room.finishGame(null);
+        assert.equal(room.room.results.winnerId, leader.member.id);
+        await command(room, leader, {type:'leave'});
+        assert.equal(room.room.status, 'results'); assert.equal(room.room.results.winnerId, other.member.id); assert.deepEqual(room.room.results.leaderboard.map(row => row.id), [other.member.id]); assert.equal(room.room.lastResult.winnerId, other.member.id);
+        await command(room, other, {type:'spectate'}); assert.equal(room.room.status, 'results'); assert.deepEqual(room.room.results.leaderboard, []); assert.equal(room.room.results.winnerId, null); assert.equal(room.room.lastResult.winnerId, null);
+    } finally {cleanup(env);}
+});
+
+test('the fixed-step pump recovers delayed callbacks without changing direct tick semantics', async () => {
+    const env = environment();
+    try {
+        const {room} = await match(env, 1), start = Date.now(); room.lastPumpAt = start; room.accumulator = 0;
+        assert.equal(room.pump(start + 10), 0); assert.equal(room.tickNumber, 0);
+        assert.equal(room.pump(start + 100), 3); assert.equal(room.tickNumber, 3); assert.equal(room.room.state.ftu, 117);
+        assert.equal(room.pump(start + 220), 3); assert.equal(room.tickNumber, 6);
+        assert.equal(room.pump(start + 300), 3); assert.equal(room.tickNumber, 9); assert.equal(room.room.state.ftu, 111);
+        room.tick(); assert.equal(room.tickNumber, 10); assert.equal(room.room.state.ftu, 110);
+        const bounded = room.pump(start + 20_000); assert.ok(bounded >= 7 && bounded <= 8); assert.ok(room.accumulator < 1000 / 30);
+        room.stopTimer(); assert.equal(room.accumulator, 0); assert.equal(room.lastPumpAt, 0);
+    } finally {cleanup(env);}
+});
+
+test('Rockets advances 900 active ticks in thirty seconds despite delayed callback batches', async () => {
+    const env = environment();
+    try {
+        const {room, members} = await rocketsMatch(env, 2), start = Date.now(); room.room.state.ftu = -1; room.lastPumpAt = start; room.accumulator = 0;
+        for (let elapsed = 100; elapsed <= 29_900; elapsed += 100) room.pump(start + elapsed);
+        assert.equal(room.room.rockets.attackerId, members[0].member.id); assert.equal(room.room.rockets.turnTicksLeft, 3);
+        room.pump(start + 30_000); assert.equal(room.room.rockets.attackerId, members[1].member.id); assert.equal(room.room.rockets.turnTicksLeft, 900); assert.equal(room.room.state.ftu, 120);
     } finally {cleanup(env);}
 });

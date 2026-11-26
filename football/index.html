@@ -7,10 +7,10 @@
         <meta name="robots" content="noindex, nofollow">
         <meta name="description" content="An unlisted football hub for you and your friends on Bonk Critic.">
         <title>Football | Bonk Critic</title>
-        <link rel="stylesheet" href="./football.css?v=20261126-football-4">
+        <link rel="stylesheet" href="./football.css?v=20261126-football-5">
         <script src="../config.js"></script>
         <script src="../focus.js" defer></script>
-        <script type="module" src="./client.js?v=20261126-football-4"></script>
+        <script type="module" src="./client.js?v=20261126-football-5"></script>
     </head>
     <body>
         <div id="footballApp" class="football-app">
@@ -52,6 +52,63 @@
                     <section class="arena-column" aria-label="Football pitch">
                         <div id="pitchWrap" class="arena-frame">
                             <canvas id="footballCanvas" width="730" height="500" tabindex="0" aria-label="Football game. Blue team attacks from the left; red team attacks from the right.">Your browser needs canvas support to play football.</canvas>
+                            <div id="rocketsHud" class="rockets-hud" aria-label="Rockets turn" hidden>
+                                <div class="rocket-turn-info">
+                                    <span class="hud-label">ROCKETS · SHOOTING NOW</span>
+                                    <strong id="rocketTurnName"></strong>
+                                </div>
+                                <span id="rocketTurnTimer" class="rocket-turn-timer" role="timer" aria-live="off"></span>
+                            </div>
+
+                            <div id="gameOverlay" class="game-overlay" role="region" aria-labelledby="overlayTitle" aria-describedby="overlayDescription" hidden>
+                                <div class="field-overlay-card" tabindex="-1">
+                                    <div class="overlay-heading">
+                                        <p class="eyebrow">THE NEXT KICKOFF</p>
+                                        <span id="overlayCountdown" class="overlay-countdown" role="timer" aria-live="off"></span>
+                                    </div>
+                                    <h2 id="overlayTitle">Choose the next game.</h2>
+                                    <p id="overlayDescription" class="overlay-description">Vote for the mode you want to play next.</p>
+
+                                    <section id="modeVotePanel" class="mode-vote-panel" aria-label="Vote for the next game mode">
+                                        <button type="button" class="mode-vote-button" data-mode-vote="balanced" aria-pressed="false">
+                                            <span class="mode-vote-heading">
+                                                <span class="mode-title">Balanced teams</span>
+                                                <span class="vote-tally"><span id="balancedVoteCount">0</span> votes</span>
+                                            </span>
+                                            <span class="mode-description">Teams scale from 1v1 to 4v4 with the lobby. Solo practice is welcome too.</span>
+                                            <span class="mode-vote-action">Vote for teams <span aria-hidden="true">→</span></span>
+                                        </button>
+                                        <button type="button" class="mode-vote-button" data-mode-vote="rockets" aria-pressed="false">
+                                            <span class="mode-vote-heading">
+                                                <span class="mode-title">Rockets</span>
+                                                <span class="vote-tally"><span id="rocketsVoteCount">0</span> votes</span>
+                                            </span>
+                                            <span class="mode-description">Take turns shooting for 30 seconds each, in the order you joined.</span>
+                                            <span class="mode-vote-action">Vote for Rockets <span aria-hidden="true">→</span></span>
+                                        </button>
+                                    </section>
+
+                                    <section id="resultsPanel" class="results-panel" aria-label="Game results" hidden>
+                                        <p id="resultsSummary" class="results-summary"></p>
+                                        <ol id="rocketLeaderboard" class="rocket-leaderboard" aria-label="Rockets leaderboard"></ol>
+                                    </section>
+                                    <p id="votingWaiting" class="voting-waiting" role="status">Join football to vote for the next game.</p>
+                                </div>
+                            </div>
+
+                            <div id="rebalanceNotice" class="rebalance-overlay" hidden>
+                                <section id="rebalancePanel" class="rebalance-card" aria-labelledby="rebalanceTitle" aria-describedby="rebalanceSummary">
+                                    <div class="rebalance-heading">
+                                        <h2 id="rebalanceTitle">Rebalance the teams?</h2>
+                                        <span id="rebalanceCountdown" class="rebalance-countdown" role="timer" aria-live="off"></span>
+                                    </div>
+                                    <p id="rebalanceSummary">Vote to even up the teams for this game.</p>
+                                    <div class="rebalance-actions" role="group" aria-label="Team rebalance vote">
+                                        <button id="rebalanceYes" type="button" class="button-primary button-small" aria-pressed="false">Yes, rebalance</button>
+                                        <button id="rebalanceNo" type="button" class="button-secondary button-small" aria-pressed="false">Keep teams</button>
+                                    </div>
+                                </section>
+                            </div>
                         </div>
                         <div class="sr-only" aria-live="polite" aria-atomic="true">
                             Score: Blue <span id="scoreBlue">0</span>, Red <span id="scoreRed">0</span>.
@@ -146,8 +203,9 @@
                             <section id="lobbyPanel" class="lobby-panel" aria-labelledby="lobbyTitle">
                                 <div class="section-heading">
                                     <h3 id="lobbyTitle">Teams</h3>
-                                    <span class="section-note">LOBBY</span>
+                                    <span id="lobbyStateLabel" class="section-note">LOBBY</span>
                                 </div>
+                                <p id="modeLabel" class="mode-label">Balanced teams</p>
                                 <div class="team-lists">
                                     <section class="team-section blue-team" aria-labelledby="blueTeamTitle">
                                         <div class="team-heading">

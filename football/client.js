@@ -1,5 +1,6 @@
 import {FootballPhysics, FOOTBALL_CONSTANTS as C, getPitchGeometry} from './physics.js?v=20261126-football-3';
 import {DEFAULT_MATCH_SETTINGS, SETTING_RULES, validateMatchSettings} from './settings.js';
+import {FOOTBALL_MODES} from './modes.js?v=20261126-football-5';
 
 const $ = id => document.getElementById(id);
 const canvas = $('footballCanvas');
@@ -24,6 +25,7 @@ let notice = '', noticeUntil = 0, latestStatus = '', lastScores = [0, 0, 0, 0];
 let account = null, reconnecting = false;
 let settingsDirty = false, settingsSignature = '', pendingSettingsSignature = null, geometrySignature = '';
 let lastRoomStatus = '', lastRosterSignature = '';
+let leaderboardSignature = '', serverClockOffset = 0;
 const smoothing = new Map();
 const seenChat = new Set();
 const viewport = {width: 730, height: 500, scale: 1, x: 0, y: 0, ratio: 1};
@@ -33,6 +35,9 @@ const isOpen = () => ready && socket?.readyState === WebSocket.OPEN;
 const editable = target => target?.closest?.('input,textarea,select,button,summary,[contenteditable="true"]');
 const clone = value => JSON.parse(JSON.stringify(value));
 const settingsFingerprint = settings => JSON.stringify(Object.keys(SETTING_RULES).map(key => settings[key] ?? DEFAULT_MATCH_SETTINGS[key]));
+const countdown = deadline => Math.max(0, Math.ceil((Number(deadline || 0) - Date.now() - serverClockOffset) / 1000));
+const modeName = () => room?.mode === 'rockets' ? FOOTBALL_MODES.rockets.label : 'Balanced teams';
+const predictionStops = state => state.fte === 0 && (room?.mode === 'rockets' || state.scores.some(score => score >= room.settings.scoreLimit));
 
 function setText(node, text) {
     if (node && node.textContent !== String(text)) node.textContent = String(text);
@@ -159,7 +164,7 @@ function acceptState(state, serverTick = 0, inputs = []) {
     if (predicted) {
         const ahead = Math.min(3, Math.floor(latency / 2 / (1000 / C.TICK_RATE)));
         for (let index = 0; index < ahead; index++) {
-            if (predicted.fte === 0 && predicted.scores.some(score => score >= room.settings.scoreLimit)) break;
+            if (predictionStops(predicted)) break;
             predicted = physics.step(predicted, predictionInput()); predictionSteps++;
         }
     }
@@ -172,7 +177,8 @@ function addChat(message) {
     seenChat.add(message.id);
     if (seenChat.size > 120) seenChat.delete(seenChat.values().next().value);
     const row = document.createElement('p'), author = document.createElement('strong');
-    author.textContent = message.name + ': ';
+    if (message.system) row.className = 'chat-system-message';
+    author.textContent = message.system ? 'System: ' : message.name + ': ';
     row.append(author, document.createTextNode(message.text || ''));
     $('chatLog').append(row);
     while ($('chatLog').children.length > 40) $('chatLog').firstElementChild.remove();
@@ -213,7 +219,7 @@ function renderRoster(team, target) {
                 const option = document.createElement('option'); option.value = value;
                 option.textContent = teamName(value); select.append(option);
             }
-            select.value = member.team; select.disabled = room.status === 'playing' || !isOpen();
+            select.value = member.team; select.disabled = room.status !== 'lobby' || !isOpen();
             select.onchange = () => send({type: 'assign', memberId: member.id, team: Number(select.value)});
             actions.append(select);
             if (member.id !== memberId) {
@@ -248,6 +254,71 @@ function renderQueue() {
     }
 }
 
+function renderGamePanels() {
+    const voting = room?.status === 'voting' && !!room.vote;
+    const results = room?.status === 'results' && !!room.results;
+    const playing = room?.status === 'playing';
+    const me = self(), eligible = !!(me?.connected && (me.team || me.queued));
+    $('gameOverlay').hidden = !voting && !results;
+    $('modeVotePanel').hidden = !voting;
+    $('resultsPanel').hidden = !results;
+    $('rebalanceNotice').hidden = !playing || !room?.rebalanceVote;
+    $('rocketsHud').hidden = !playing || room?.mode !== 'rockets' || !room.rockets;
+    $('votingWaiting').hidden = !voting;
+    if (voting) {
+        const vote = room.vote, selected = vote.votes?.[memberId];
+        setText($('overlayTitle'), 'Choose the next game');
+        setText($('overlayDescription'), 'Vote for balanced football or take turns in Rockets.');
+        setText($('overlayCountdown'), countdown(vote.deadline) + 's left');
+        setText($('balancedVoteCount'), vote.counts?.balanced || 0);
+        setText($('rocketsVoteCount'), vote.counts?.rockets || 0);
+        for (const button of document.querySelectorAll('[data-mode-vote]')) {
+            button.disabled = !isOpen() || !eligible || countdown(vote.deadline) === 0;
+            button.setAttribute('aria-pressed', String(selected === button.dataset.modeVote));
+        }
+        setText($('votingWaiting'), !eligible ? 'Join a team or the queue to vote. Spectators can watch.'
+            : selected ? 'Your vote: ' + (selected === 'rockets' ? 'Rockets' : 'Balanced teams') + '. You can change it until voting ends.'
+            : 'One vote per player. Voting closes when everyone has voted or time runs out.');
+    } else if (results) {
+        const result = room.results, rocketResults = result.mode === 'rockets';
+        setText($('overlayTitle'), rocketResults ? 'Fastest goals' : room.winner ? teamName(room.winner) + ' wins' : 'Game complete');
+        setText($('overlayDescription'), rocketResults ? 'Rockets results, ranked by ball speed as it crossed the goal.' : 'Get ready to vote for the next game.');
+        setText($('overlayCountdown'), 'Next vote in ' + countdown(result.deadline) + 's');
+        const scores = result.scores || [0, 0, 0, 0];
+        setText($('resultsSummary'), rocketResults ? 'One turn per player, in join order. Speeds are measured in m/s.' : 'Blue ' + scores[3] + ' — ' + scores[2] + ' Red');
+        $('rocketLeaderboard').hidden = !rocketResults;
+        const signature = JSON.stringify(result.leaderboard || []);
+        if (signature !== leaderboardSignature) {
+            leaderboardSignature = signature; $('rocketLeaderboard').replaceChildren();
+            for (const entry of result.leaderboard || []) {
+                const row = document.createElement('li'), name = document.createElement('span'), speed = document.createElement('strong');
+                row.dataset.scored = String(!!entry.scored);
+                name.className = 'leaderboard-name'; speed.className = 'leaderboard-score';
+                name.textContent = entry.name; speed.textContent = entry.scored && Number.isFinite(entry.speed) ? entry.speed.toFixed(1) + ' m/s' : 'No goal';
+                row.append(name, speed); $('rocketLeaderboard').append(row);
+            }
+            if (!$('rocketLeaderboard').children.length) {
+                const empty = document.createElement('li'); empty.className = 'leaderboard-empty'; empty.textContent = 'No completed goals this game.'; $('rocketLeaderboard').append(empty);
+            }
+        }
+    }
+    if (playing && room.rebalanceVote) {
+        const vote = room.rebalanceVote, selected = vote.votes?.[memberId];
+        setText($('rebalanceCountdown'), countdown(vote.deadline) + 's');
+        setText($('rebalanceSummary'), 'A player left. Rebalance with a new kickoff, or keep playing with these teams? '
+            + (vote.counts?.yes || 0) + ' yes · ' + (vote.counts?.no || 0) + ' no. A majority is required.');
+        for (const [id, value] of [['rebalanceYes', true], ['rebalanceNo', false]]) {
+            $(id).disabled = !isOpen() || !eligible || countdown(vote.deadline) === 0;
+            $(id).setAttribute('aria-pressed', String(selected === value));
+        }
+    }
+    if (playing && room.mode === 'rockets' && room.rockets) {
+        const turn = room.rockets, attacker = room.members.find(member => member.id === turn.attackerId);
+        setText($('rocketTurnName'), (attacker?.name || 'Next player') + ' · Turn ' + turn.turnIndex + '/' + turn.totalTurns);
+        setText($('rocketTurnTimer'), Math.ceil(Math.max(0, turn.turnTicksLeft) / C.TICK_RATE) + 's');
+    }
+}
+
 function buildSettingsFields() {
     const container = $('settingsFields');
     for (const [key, rule] of Object.entries(SETTING_RULES)) {
@@ -270,17 +341,17 @@ function updateSettings() {
         for (const key of Object.keys(SETTING_RULES)) $('setting-' + key).value = room.settings[key] ?? DEFAULT_MATCH_SETTINGS[key];
         settingsDirty = false; settingsSignature = signature;
     }
-    const disabled = room.status === 'playing' || !isOpen() || !self()?.admin || pendingSettingsSignature !== null;
+    const disabled = room.status !== 'lobby' || !isOpen() || !self()?.admin || pendingSettingsSignature !== null;
     $('matchSettingsForm').querySelectorAll('input,button').forEach(input => input.disabled = disabled);
     $('saveSettings').disabled = disabled || !settingsDirty;
-    if ($('settingsStatus')) setText($('settingsStatus'), room.status === 'playing' ? 'Return to the lobby to change the match settings.' : settingsDirty ? 'Unsaved changes' : 'Settings apply to the next game.');
+    if ($('settingsStatus')) setText($('settingsStatus'), room.status !== 'lobby' ? 'Match settings are available in the lobby after voting.' : settingsDirty ? 'Unsaved changes' : 'Settings apply to the next game.');
 }
 
 function applyRoom(next) {
     if (!next) return;
-    const oldStatus = room?.status; room = next;
+    const oldStatus = room?.status, oldAttacker = room?.rockets?.attackerId; room = next;
     if (settingsFingerprint(room.settings) === pendingSettingsSignature) {settingsDirty = false; pendingSettingsSignature = null;}
-    if (oldStatus !== room.status) {releaseInput(); snapshots = []; smoothing.clear(); predicted = null;}
+    if (oldStatus !== room.status || oldAttacker !== room.rockets?.attackerId) {releaseInput(); snapshots = []; smoothing.clear(); predicted = null;}
     $('roomEntry').hidden = true; $('roomPanel').hidden = false;
     setText($('roomTitle'), room.name); setText($('roomCodeDisplay'), room.id);
     history.replaceState(null, '', location.pathname);
@@ -293,24 +364,30 @@ function applyRoom(next) {
     $('startMatch').hidden = room.status !== 'lobby';
     $('abortMatch').hidden = !playing;
     $('rematchMatch').hidden = room.status !== 'finished';
-    const both = [2, 3].every(team => room.members.some(member => member.team === team && member.connected));
-    $('startMatch').disabled = !both || !isOpen(); $('rematchMatch').disabled = !both || !isOpen();
+    const canStart = !!room.canStart;
+    $('startMatch').disabled = !canStart || !isOpen(); $('rematchMatch').disabled = !canStart || !isOpen();
+    setText($('modeLabel'), modeName());
+    setText($('lobbyStateLabel'), room.status === 'playing' ? 'IN GAME' : room.status === 'voting' ? 'VOTING' : room.status === 'results' ? 'RESULTS' : 'LOBBY');
     for (const [id, team] of [['joinBlue', 3], ['joinRed', 2], ['spectate', 0]]) {
         $(id).disabled = !isOpen() || (team ? me?.team === team || (me?.queued && me.queueTeam === team) : !me?.team && !me?.queued);
         $(id).textContent = team ? playing ? 'Queue ' + teamName(team).toLowerCase() : 'Join ' + teamName(team).toLowerCase() : 'Spectate';
     }
     $('joinQueue').disabled = !isOpen() || !!me?.team || (!!me?.queued && !me.queueTeam);
-    $('readyButton').disabled = !isOpen() || playing || !me?.team;
+    const readyEligible = !!(me?.connected && (me.team || (room.mode === 'rockets' && me.queued)));
+    $('readyButton').disabled = !isOpen() || room.status !== 'lobby' || !readyEligible;
     $('readyButton').setAttribute('aria-pressed', String(!!me?.ready));
     setText($('readyButton'), me?.ready ? '✓ Ready — click to cancel' : 'Ready');
-    const active = room.members.filter(member => member.team && member.connected);
+    const active = room.members.filter(member => member.connected && (member.team || (room.mode === 'rockets' && member.queued)));
     const waiting = active.filter(member => !member.ready).length;
-    setText($('readySummary'), playing ? (me?.queued ? 'You will join at the next kickoff with an available place.' : 'The next game starts when both teams are ready.')
-        : !both ? 'Both teams need a player.' : waiting ? active.filter(member => member.ready).length + ' / ' + active.length + ' ready. Everyone on a team must be ready.' : 'Everyone is ready. Starting…');
+    setText($('readySummary'), room.status === 'voting' ? 'Choose the next mode on the pitch, then ready up.'
+        : room.status === 'results' ? 'Results are on the pitch. The next mode vote starts shortly.'
+        : playing ? room.mode === 'rockets' ? (room.rockets?.participantIds?.includes(memberId) ? 'Your Rockets turn follows join order.' : 'New arrivals play in the next game.')
+            : me?.queued ? 'You will join at the next kickoff with an available place.' : 'Players can vote to rebalance if someone leaves.'
+        : !active.length ? 'Join the queue to play.' : waiting ? active.filter(member => member.ready).length + ' / ' + active.length + ' ready.' + (active.length === 1 ? ' You can practise solo.' : ' Everyone playing must be ready.') : 'Everyone is ready. Starting…');
     $('chatInput').disabled = !isOpen(); $('sendChat').disabled = !isOpen();
     const rosterSignature = room.members.map(member => member.id + ':' + member.team + ':' + !!member.queued).join('|');
-    if (lastRoomStatus !== room.status) addActivity(room.status === 'playing' ? 'Game started. Blue attacks right; Red attacks left.'
-        : room.status === 'finished' ? teamName(room.winner) + ' wins. Ready up for the next game.' : 'Lobby open. Join a team and mark yourself ready.');
+    if (lastRoomStatus !== room.status) addActivity(room.status === 'playing' ? modeName() + ' started.'
+        : room.status === 'results' ? 'Game complete. Results are on the pitch.' : room.status === 'voting' ? 'Vote for the next game on the pitch.' : 'Lobby open. Mark yourself ready to play.');
     else if (lastRosterSignature && lastRosterSignature !== rosterSignature) addActivity('Teams and the next-kickoff queue have been updated.');
     lastRoomStatus = room.status; lastRosterSignature = rosterSignature;
     for (const message of room.chat || []) addChat(message);
@@ -319,11 +396,11 @@ function applyRoom(next) {
         lastState = null; predicted = null; snapshots = []; lastScores = [0, 0, 0, 0];
         setText($('scoreBlue'), 0); setText($('scoreRed'), 0);
     }
-    if (oldStatus !== room.status && room.status === 'playing' && self()?.team
+    if ((oldStatus !== room.status || oldAttacker !== room.rockets?.attackerId) && room.status === 'playing' && self()?.team
         && !document.activeElement?.matches('input,textarea,select,[contenteditable="true"]')) {
         canvas.focus({preventScroll: true});
     }
-    updateMatchStatus();
+    renderGamePanels(); updateMatchStatus();
 }
 
 function updateMatchStatus() {
@@ -332,14 +409,20 @@ function updateMatchStatus() {
         const me = self();
         const role = me?.team ? 'Playing for ' + teamName(me.team) : me?.queued ? 'Queue position ' + me.queuePosition : 'Spectating';
         if (!ready) text = reconnecting ? 'Connection interrupted. Reconnecting…' : 'Connecting to room…';
+        else if (room.status === 'voting') text = 'Vote for the next game on the pitch. ' + countdown(room.vote?.deadline) + 's remaining.';
+        else if (room.status === 'results') text = modeName() + ' complete. Results are on the pitch.';
         else if (room.status === 'lobby') text = role + '. Ready up when you want to play.';
         else if (room.status === 'finished') text = teamName(room.winner) + ' wins. Ready up for the next game.';
         else if (lastState?.ftu >= 0) text = 'Kickoff in ' + Math.ceil(lastState.ftu / 30) + '. ' + role + '.';
         else if (lastState?.fte >= 0) text = teamName(lastState.lscr) + ' scores!';
-        else text = role + '. ' + (room.settings.goalHeight < 0 ? 'Goals closed — practice mode.' : 'First to ' + room.settings.scoreLimit + '.');
+        else if (room.mode === 'rockets' && room.rockets) {
+            const attacker = room.members.find(member => member.id === room.rockets.attackerId);
+            text = (attacker?.name || 'Next player') + ' is shooting. ' + Math.ceil(room.rockets.turnTicksLeft / 30) + 's left.';
+        } else text = role + '. ' + (room.settings.goalHeight < 0 ? 'Goals closed — practice mode.' : 'First to ' + room.settings.scoreLimit + '.');
     }
     if (notice && performance.now() < noticeUntil) text = notice;
     if (text !== latestStatus) {latestStatus = text; setText($('matchStatus'), text);}
+    renderGamePanels();
 }
 
 async function connectSession(joined) {
@@ -365,7 +448,12 @@ async function connectSession(joined) {
                 if (!settled) {settled = true; clearTimeout(timeout); resolve();}
             } else if (message.type === 'room') applyRoom(message.room);
             else if (message.type === 'snapshot') {
-                if (room) {room.status = message.status || room.status; room.winner = message.winner ?? room.winner;}
+                if (room) {
+                    room.status = message.status || room.status; room.mode = message.mode || room.mode; room.winner = message.winner ?? room.winner;
+                    if (Object.hasOwn(message, 'rockets')) room.rockets = message.rockets;
+                    if (Object.hasOwn(message, 'rebalanceVote')) room.rebalanceVote = message.rebalanceVote;
+                }
+                if (Number.isFinite(message.serverTime)) serverClockOffset = message.serverTime - Date.now();
                 acceptState(message.state, message.tick, message.inputs);
             } else if (message.type === 'chat') addChat(message);
             else if (message.type === 'notice') {showNotice(message.text || 'Lobby updated.'); addActivity(message.text);}
@@ -374,6 +462,7 @@ async function connectSession(joined) {
             }
             else if (message.type === 'pong') {
                 latency = Math.max(0, Math.min(2000, performance.now() - message.sentAt));
+                if (Number.isFinite(message.serverTime)) serverClockOffset = message.serverTime + latency / 2 - Date.now();
                 setText($('connectionStatus'), 'Connected · ' + Math.round(latency) + ' ms');
             } else if (message.type === 'error') {
                 const settingsPending = pendingSettingsSignature !== null; pendingSettingsSignature = null;
@@ -430,8 +519,8 @@ function returnToEntry(message = '') {
     room = null; memberId = null; lastState = null; predicted = null; snapshots = []; smoothing.clear();
     seenChat.clear(); $('chatLog').replaceChildren(); $('activityLog').replaceChildren();
     $('hostControls').hidden = true; $('adminMatchControls').hidden = true; $('chatInput').disabled = true; $('sendChat').disabled = true;
-    lastRoomStatus = ''; lastRosterSignature = ''; settingsSignature = ''; settingsDirty = false; pendingSettingsSignature = null;
-    syncPitch(null); setBusy(false); updateMatchStatus();
+    lastRoomStatus = ''; lastRosterSignature = ''; settingsSignature = ''; settingsDirty = false; pendingSettingsSignature = null; leaderboardSignature = '';
+    syncPitch(null); setBusy(false); renderGamePanels(); updateMatchStatus();
 }
 
 async function entryAction(action) {
@@ -449,12 +538,18 @@ $('leaveRoom').addEventListener('click', () => {send({type: 'leave'}); storeSeat
 for (const [id, team] of [['joinBlue', 3], ['joinRed', 2], ['spectate', 0]]) $(id).addEventListener('click', () => send({type: 'team', team}));
 $('joinQueue').addEventListener('click', () => send({type: 'queue', team: 0}));
 $('readyButton').addEventListener('click', () => {warmAudio(); send({type: 'ready', ready: !self()?.ready});});
+for (const button of document.querySelectorAll('[data-mode-vote]')) button.addEventListener('click', () => {
+    releaseInput(); send({type: 'modeVote', mode: button.dataset.modeVote});
+});
+for (const [id, yes] of [['rebalanceYes', true], ['rebalanceNo', false]]) $(id).addEventListener('click', () => {
+    releaseInput(); send({type: 'rebalanceVote', yes}); canvas.focus({preventScroll: true});
+});
 for (const [id, type] of [['startMatch', 'start'], ['abortMatch', 'abort'], ['rematchMatch', 'rematch']]) $(id).addEventListener('click', () => {warmAudio(); send({type}); canvas.focus({preventScroll: true});});
 buildSettingsFields();
 $('matchSettingsForm').addEventListener('input', () => {settingsDirty = true; if (room) updateSettings();});
 $('matchSettingsForm').addEventListener('submit', event => {
     event.preventDefault();
-    if (!self()?.admin || room.status === 'playing') return;
+    if (!self()?.admin || room.status !== 'lobby') return;
     const patch = Object.fromEntries(Object.keys(SETTING_RULES).map(key => [key, Number($('setting-' + key).value)]));
     const checked = validateMatchSettings(patch, room.settings);
     if (checked.error) {setText($('settingsStatus'), checked.error); return;}
@@ -573,7 +668,7 @@ function draw(now) {
     if (predicted && room?.status === 'playing' && isOpen() && now - lastSnapshotAt < 500) {
         let steps = 0;
         while (now - lastPredictionAt >= 1000 / C.TICK_RATE && predictionSteps < 7 && steps++ < 3) {
-            if (predicted.fte === 0 && predicted.scores.some(score => score >= room.settings.scoreLimit)) break;
+            if (predictionStops(predicted)) break;
             predicted = physics.step(predicted, predictionInput()); lastPredictionAt += 1000 / C.TICK_RATE; predictionSteps++;
         }
     }
@@ -614,6 +709,7 @@ function draw(now) {
     let banner = '', caption = '';
     if (!room) {banner = 'FOOTBALL'; caption = 'One pitch. Join the lobby and play.';}
     else if (!ready) {banner = reconnecting ? 'RECONNECTING' : 'CONNECTING'; caption = 'Waiting for the room…';}
+    else if (room.status === 'voting' || room.status === 'results') {banner = ''; caption = '';}
     else if (room.status === 'lobby') {banner = 'LOBBY'; caption = 'Join a team. Ready up to start.';}
     else if (room.status === 'finished') {banner = teamName(room.winner).toUpperCase() + ' TEAM WINS'; caption = 'Ready up for the next game.';}
     else if (authoritative?.ftu >= 0) {banner = String(Math.ceil(authoritative.ftu / 30)); caption = 'ROUND STARTS IN';}

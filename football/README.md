@@ -6,17 +6,52 @@ link joins the same shared football lobby.
 
 ## Playing
 
-Enter a display name and choose Join football. New arrivals join the queue; in
-the lobby they fill available places immediately. During a game, they wait for
-the next kickoff after a goal. Places are filled in queue order, with up to four
-players per side. Players can request Blue or Red, choose either team, or opt out
-and spectate. An occupied place is not taken away to make room for the queue.
+Enter a display name and choose Join football. A voting station on the pitch
+offers Balanced teams and Rockets. Each connected participant has one vote;
+spectators can watch. Voting lasts fifteen seconds, or ends sooner when every
+eligible player has voted. A tie selects Balanced teams.
+
+Balanced teams keeps the sides as even as possible, with up to four players per
+side. A single player can start a practice game. New arrivals join the queue and
+take an available place at the next kickoff. Lobby assignments keep team sizes
+within one player while moving as few existing players as possible. Players
+can opt out and spectate.
 
 Between games, each team player has a Ready button and a visible ready status.
-When both teams have a connected player and every connected team player is
-ready, the server starts a new game automatically. Spectators and queued
-players do not block the ready check. Readiness resets when the lobby roster or
-match settings change. Site administrators can also start or end a game.
+When every participating player is ready, the server starts a new game
+automatically, including solo practice. Spectators do not block the ready
+check. Rockets includes its queued participants in this check. Readiness resets
+when the lobby roster or match settings change. Site administrators can also
+start or end a game.
+
+If a Balanced teams player leaves, a fifteen-second Yes/No vote asks the
+remaining participants whether to rebalance. A majority voting Yes starts a
+fresh kickoff with even teams and preserves the score. No, a tie, or timeout
+continues with the current assignments for the rest of that game. Waiting
+players can still fill vacancies.
+
+Game results appear over the dimmed pitch for ten seconds, followed by another
+mode vote and the next lobby. The server owns phase deadlines and voting
+eligibility.
+
+## Rockets
+
+Every participant gets one attacking turn in server-recorded join order. The
+attacker plays Blue against up to four other participants defending Red. Other
+participants wait for their turns; new arrivals enter the next game. Each turn
+allows thirty seconds of active play, excluding kickoff and goal celebration.
+A goal or timeout ends the turn. Solo Rockets is also supported.
+
+A successful goal posts a system chat message such as `Player reached 19.6 m/s.`
+The measurement matches `Project-002/football-ball-speed.user.js` from the
+supplied references: `Math.hypot(ball.xv, ball.yv)`, captured from the scoring
+physics tick. Velocity is already in metres per second. Rankings keep full
+precision and only round the displayed value.
+
+The end-of-game leaderboard ranks goals from fastest to slowest, with join
+order breaking exact ties. Players without a goal appear afterward. Leaving
+or disconnecting withdraws that player, skips their current turn, and removes
+their leaderboard entry. A resumed seat can join the following game.
 
 Move with WASD or the arrow keys. X, Space and Shift kick; releasing the key
 rearms the next successful kick. Holding a kick reduces movement force to 70%.
@@ -98,7 +133,8 @@ for the shared lobby and cannot create separate games. WebSocket tickets are sin
 after 30 seconds. Resume credentials rotate, inputs expire after one second,
 silent connections close after fifteen seconds, and disconnected seats have a
 fifteen-second grace period. Idle membership is cleared without discarding the
-shared match configuration. Chat,
+shared match configuration. Mode votes, rebalance votes, turn clocks and results
+are checkpointed with the game. Chat,
 message sizes, input rates and roster sizes are bounded.
 
 Deploy the existing Worker with its `FOOTBALL_ROOMS` binding and `football-v1`
