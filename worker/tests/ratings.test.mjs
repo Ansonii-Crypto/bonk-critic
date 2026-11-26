@@ -6,7 +6,7 @@ import test from 'node:test';
 const worker = (await import('../src/index.js')).default;
 const attributes = ['control', 'execution', 'defending', 'reaction_time', 'chemistry', 'game_sense'];
 const origin = 'https://bonk-critic.com';
-const bands = [[0, 'F'], [1030, 'E'], [1199, 'D'], [1279, 'C'], [1427, 'B'], [1509, 'A'], [1591, 'S']];
+const bands = [[0, 'F'], [258, 'E'], [516, 'D'], [774, 'C'], [1158, 'B'], [1296, 'A'], [1536, 'S']];
 const expectedTier = total => [...bands].reverse().find(([minimum]) => total >= minimum)[1];
 const digest = async value => Buffer.from(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))).toString('hex');
 
@@ -83,27 +83,24 @@ test('published assessment tiers use fixed total boundaries and ignore supplied 
     assert.equal(db.prepare('SELECT COUNT(*) AS count FROM players').get().count, before);
 });
 
-test('the published tier definition agrees with the frozen calibration sample and attribute thresholds', async t => {
+test('the published tier definition uses fixed ability scores and their six-attribute totals', async t => {
     const {request, create} = await environment(t);
     const response = await request('/api/tier-system', {authenticated: false});
     assert.equal(response.status, 200);
     const definition = await response.json();
-    assert.equal(definition.metadata.sampleSize, 20);
-    const sample = [...definition.metadata.referenceTotals].sort((left, right) => left - right);
-    assert.equal(sample.length, definition.metadata.sampleSize);
-    assert.deepEqual(definition.cutoffs.map(item => item.percentile), [5, 20, 40, 60, 80, 95]);
+    assert.equal(definition.metadata.version, '2026-11-26-fixed-score-v1');
+    assert.equal(definition.metadata.effectiveAt, '2026-11-26');
+    assert.deepEqual(definition.cutoffs.map(item => item.score), [43, 86, 129, 193, 216, 256]);
     assert.deepEqual(definition.cutoffs.map(item => [item.total, item.tier]), bands.slice(1));
+    assert.doesNotMatch(JSON.stringify(definition), /percentile|sampleSize|referenceTotals|calibratedAt/);
     for (const cutoff of definition.cutoffs) {
-        const position = (sample.length - 1) * cutoff.percentile / 100;
-        const lower = Math.floor(position), upper = Math.ceil(position);
-        const quantile = sample[lower] + (sample[upper] - sample[lower]) * (position - lower);
-        assert.equal(cutoff.total, Math.ceil(quantile), cutoff.tier + ' percentile');
+        assert.equal(cutoff.total, cutoff.score * attributes.length, cutoff.tier + ' total');
         assert.equal(globalThis.BonkRatings.tierForTotal(cutoff.total), cutoff.tier);
-        assert.equal(globalThis.BonkRatings.tierForScore(cutoff.total / 6), cutoff.tier);
-        assert.equal(globalThis.BonkRatings.tierForScore(Math.ceil(cutoff.total / 6)), cutoff.tier);
-        assert.equal(globalThis.BonkRatings.tierForScore(Math.ceil(cutoff.total / 6) - 1), expectedTier((Math.ceil(cutoff.total / 6) - 1) * 6));
+        assert.equal(globalThis.BonkRatings.tierForScore(cutoff.score), cutoff.tier);
+        assert.equal(globalThis.BonkRatings.tierForScore(cutoff.score - 1), expectedTier((cutoff.score - 1) * 6));
+        assert.equal(globalThis.BonkRatings.tierForScore(cutoff.score - 0.01), expectedTier(cutoff.total - 1));
     }
-    await create(1800, 'Not part of the frozen sample');
+    await create(1800, 'A new qualifying player');
     await request('/api/player-drafts', {body: {data: assessment(0, 'Unpublished draft')}});
     assert.deepEqual(await (await request('/api/tier-system', {authenticated: false})).json(), definition);
     assert.doesNotMatch(JSON.stringify(definition), /bonk_id|owner_id|account_id|password|token/);
@@ -119,14 +116,14 @@ test('editing and adding assessments recalculate tiers while keeping historical 
     response = await request('/api/players/' + id, {method: 'PUT', body: {...assessment(1279, 'Changing player', '2026-11-25'), new_assessment: true, overall_tier: 'S'}});
     assert.equal(response.status, 200);
     const history = db.prepare('SELECT * FROM assessments WHERE player_id=? ORDER BY id').all(id);
-    assert.deepEqual(history.map(item => [item.total, item.overall_tier]), [[1509, 'A'], [1279, 'C']]);
-    assert.equal(db.prepare('SELECT overall_tier FROM players WHERE id=?').get(id).overall_tier, 'C');
+    assert.deepEqual(history.map(item => [item.total, item.overall_tier]), [[1509, 'A'], [1279, 'B']]);
+    assert.equal(db.prepare('SELECT overall_tier FROM players WHERE id=?').get(id).overall_tier, 'B');
     const change = JSON.parse(db.prepare("SELECT assessment_changes FROM activity_logs WHERE assessment_changes IS NOT NULL ORDER BY id LIMIT 1").get().assessment_changes);
     assert.equal(change.after.overall_tier, 'A');
     db.prepare('UPDATE players SET locked=1 WHERE id=?').run(id);
     response = await request('/api/players/' + id, {method: 'PUT', body: {...assessment(1800, 'Changing player'), assessment_id: first}});
     assert.equal(response.status, 423);
-    assert.deepEqual(db.prepare('SELECT total,overall_tier FROM assessments WHERE player_id=? ORDER BY id').all(id).map(item => [item.total, item.overall_tier]), [[1509, 'A'], [1279, 'C']]);
+    assert.deepEqual(db.prepare('SELECT total,overall_tier FROM assessments WHERE player_id=? ORDER BY id').all(id).map(item => [item.total, item.overall_tier]), [[1509, 'A'], [1279, 'B']]);
 });
 
 test('saved drafts are reclassified when read, edited and pushed without trusting a stale tier', async t => {
@@ -139,21 +136,29 @@ test('saved drafts are reclassified when read, edited and pushed without trustin
     const revision = (await updated.json()).revision;
     db.prepare('UPDATE player_drafts SET data=json_set(data,\'$.overall_tier\',\'S\') WHERE id=?').run(created.id);
     const list = await (await request('/api/player-drafts')).json();
-    assert.equal(list.drafts[0].data.overall_tier, 'B');
+    assert.equal(list.drafts[0].data.overall_tier, 'A');
     assert.equal(list.drafts[0].revision, revision);
     const pushed = await request('/api/player-drafts/' + created.id + '/push', {body: {revision}});
     assert.equal(pushed.status, 201);
     const id = (await pushed.json()).id;
-    assert.equal(db.prepare('SELECT overall_tier FROM players WHERE id=?').get(id).overall_tier, 'B');
-    assert.equal(db.prepare('SELECT overall_tier FROM assessments WHERE player_id=?').get(id).overall_tier, 'B');
+    assert.equal(db.prepare('SELECT overall_tier FROM players WHERE id=?').get(id).overall_tier, 'A');
+    assert.equal(db.prepare('SELECT overall_tier FROM assessments WHERE player_id=?').get(id).overall_tier, 'A');
 });
 
-test('adding a stronger player never moves fixed boundaries for existing players', async t => {
+test('a top-ranked player needs the S benchmark and every qualifying player can be S', async t => {
     const {db, create} = await environment(t);
     const id = await create(1400, 'Existing player');
-    await create(1800, 'New highest player');
-    assert.equal(db.prepare('SELECT overall_tier FROM players WHERE id=?').get(id).overall_tier, 'C');
-    assert.equal(db.prepare('SELECT overall_tier FROM assessments WHERE player_id=?').get(id).overall_tier, 'C');
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM players').get().count, 1);
+    assert.equal(db.prepare('SELECT overall_tier FROM players WHERE id=?').get(id).overall_tier, 'A');
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM players WHERE overall_tier='S'").get().count, 0);
+    const qualified = [];
+    for (const total of [1536, 1591, 1800]) qualified.push(await create(total, 'Qualified ' + total));
+    assert.deepEqual(qualified.map(playerId => db.prepare('SELECT overall_tier FROM players WHERE id=?').get(playerId).overall_tier), ['S', 'S', 'S']);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM players WHERE overall_tier='S'").get().count, 3);
+    for (let index = 0; index < 5; index++) await create(0, 'New low score ' + index);
+    assert.equal(db.prepare('SELECT overall_tier FROM players WHERE id=?').get(id).overall_tier, 'A');
+    assert.equal(db.prepare('SELECT overall_tier FROM assessments WHERE player_id=?').get(id).overall_tier, 'A');
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM players WHERE overall_tier='S'").get().count, 3);
 });
 
 test('deleting assessments restores the prior calculated tier and leaves an empty record at F', async t => {
@@ -174,20 +179,20 @@ test('public reads reclassify legacy player and assessment tiers without rewriti
     db.prepare('UPDATE players SET overall_tier=\'F\',locked=1 WHERE id=?').run(id);
     db.prepare('UPDATE assessments SET overall_tier=\'F\' WHERE player_id=?').run(id);
     const directory = await (await request('/api/players', {authenticated: false})).json();
-    assert.equal(directory.players.find(player => player.id === id).overall_tier, 'B');
+    assert.equal(directory.players.find(player => player.id === id).overall_tier, 'A');
     const profile = await (await request('/api/players/' + id, {authenticated: false})).json();
-    assert.equal(profile.player.overall_tier, 'B');
-    assert.equal(profile.history[0].overall_tier, 'B');
+    assert.equal(profile.player.overall_tier, 'A');
+    assert.equal(profile.history[0].overall_tier, 'A');
     const recent = await (await request('/api/recent-assessments', {authenticated: false})).json();
-    assert.equal(recent.updates.find(player => player.id === id).overall_tier, 'B');
+    assert.equal(recent.updates.find(player => player.id === id).overall_tier, 'A');
     assert.equal(db.prepare('SELECT overall_tier FROM players WHERE id=?').get(id).overall_tier, 'F');
     assert.equal(db.prepare('SELECT locked FROM players WHERE id=?').get(id).locked, 1);
 });
 
 test('the tier migration reclassifies locked records, history and drafts without changing scores or editorial metadata', async t => {
     const {db, request, create} = await environment(t);
-    const id = await create(1509, 'Migration player', '2026-11-20');
-    await request('/api/players/' + id, {method: 'PUT', body: {...assessment(1591, 'Migration player'), new_assessment: true}});
+    const id = await create(1400, 'Migration player', '2026-11-20');
+    await request('/api/players/' + id, {method: 'PUT', body: {...assessment(1536, 'Migration player'), new_assessment: true}});
     db.prepare('UPDATE players SET overall_tier=\'F\',locked=1,updated_at=\'2026-11-01\' WHERE id=?').run(id);
     db.prepare('UPDATE assessments SET overall_tier=\'F\',notes=\'Keep these notes\' WHERE player_id=?').run(id);
     // A stored total must not override the six actual attributes used for classification.
@@ -195,11 +200,12 @@ test('the tier migration reclassifies locked records, history and drafts without
     const draft = {...assessment(1279, 'Existing draft'), overall_tier: 'S', custom_note: 'Preserve unknown draft fields'};
     db.prepare('INSERT INTO player_drafts VALUES(?,?,?,?,?,?)').run('existing-draft', 'primary-zimble', 'Original author', JSON.stringify(draft), 7, '2026-10-25');
     db.prepare('INSERT INTO player_drafts VALUES(?,?,?,?,?,?)').run('partial-draft', 'primary-zimble', 'Original author', JSON.stringify({name: 'Incomplete', control: '200', overall_tier: 'S'}), 3, '2026-10-20');
+    db.exec(readFileSync(new URL('../migrations/0015_percentile_tiers.sql', import.meta.url), 'utf8'));
     const beforePlayer = db.prepare('SELECT * FROM players WHERE id=?').get(id);
     const beforeHistory = db.prepare('SELECT * FROM assessments WHERE player_id=? ORDER BY id').all(id);
     const beforeDrafts = db.prepare('SELECT * FROM player_drafts ORDER BY id').all();
     const beforeLogs = db.prepare('SELECT * FROM activity_logs ORDER BY id').all();
-    const migration = readFileSync(new URL('../migrations/0015_percentile_tiers.sql', import.meta.url), 'utf8');
+    const migration = readFileSync(new URL('../migrations/0016_fixed_score_tiers.sql', import.meta.url), 'utf8');
     db.exec(migration);
     const afterPlayer = db.prepare('SELECT * FROM players WHERE id=?').get(id);
     assert.deepEqual({...afterPlayer, overall_tier: beforePlayer.overall_tier}, {...beforePlayer});
@@ -209,7 +215,7 @@ test('the tier migration reclassifies locked records, history and drafts without
     assert.deepEqual(afterHistory.map(row => row.overall_tier), ['A', 'S']);
     const afterDrafts = db.prepare('SELECT * FROM player_drafts ORDER BY id').all();
     assert.deepEqual(afterDrafts.map((row, index) => ({...row, data: beforeDrafts[index].data})), beforeDrafts.map(row => ({...row})));
-    assert.deepEqual(afterDrafts.map(row => JSON.parse(row.data).overall_tier), ['C', 'F']);
+    assert.deepEqual(afterDrafts.map(row => JSON.parse(row.data).overall_tier), ['B', 'F']);
     for (let index = 0; index < afterDrafts.length; index++) {
         const original = JSON.parse(beforeDrafts[index].data), updated = JSON.parse(afterDrafts[index].data);
         assert.deepEqual({...updated, overall_tier: original.overall_tier}, original);

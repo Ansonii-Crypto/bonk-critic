@@ -115,8 +115,8 @@ test('shared drafts stay private, enforce ownership and revisions, and publish o
   assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM player_drafts').get().n,0);
   assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM players').get().n,1);
   assert.equal(env.db.prepare('SELECT total FROM assessments').get().total,1123);
-  assert.equal(env.db.prepare('SELECT overall_tier FROM players').get().overall_tier,'E');
-  assert.equal(env.db.prepare('SELECT overall_tier FROM assessments').get().overall_tier,'E');
+  assert.equal(env.db.prepare('SELECT overall_tier FROM players').get().overall_tier,'C');
+  assert.equal(env.db.prepare('SELECT overall_tier FROM assessments').get().overall_tier,'C');
   let profile=await (await request('/api/players/'+id,'GET',null,null)).json();
   assert.equal(profile.history[0].assessed_by,'author');
   assert.equal((await request('/api/players/'+id,'PUT',{...data,assessment_id:profile.history[0].id},'viewer')).status,200);
@@ -133,8 +133,8 @@ test('shared drafts stay private, enforce ownership and revisions, and publish o
 
   const editLog=env.db.prepare("SELECT * FROM activity_logs WHERE action='updated_player' ORDER BY id DESC LIMIT 1").get();
   const changes=JSON.parse(editLog.assessment_changes);
-  assert.equal(changes.before.overall_tier,'E');
-  assert.equal(changes.after.overall_tier,'E');
+  assert.equal(changes.before.overall_tier,'C');
+  assert.equal(changes.after.overall_tier,'C');
   assert.equal(changes.before.control,123);
   assert.equal(changes.after.control,123);
   assert.equal((await request('/api/players/'+id,'PUT',{...data,control:250,new_assessment:true},'viewer')).status,200);

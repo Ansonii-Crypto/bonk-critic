@@ -96,7 +96,7 @@ test('draft saving replaces an obsolete hidden tier with the calculated tier',as
  assert.equal(state.revision,3);
 });
 
-test('automatic player tiers use all six attributes at every calibrated boundary and update on input',()=>{
+test('automatic player tiers use all six attributes at every fixed score boundary and update on input',()=>{
  const source=readFileSync(new URL('../../app.js',import.meta.url),'utf8');
  const tierLine=source.split('\n').find(line=>line.startsWith('const tier='));
  const helper=source.slice(source.indexOf('function calculatedPlayerTier('),source.indexOf('function form('));
@@ -107,9 +107,9 @@ test('automatic player tiers use all six attributes at every calibrated boundary
  vm.runInContext(readFileSync(new URL('../../ratings.js',import.meta.url),'utf8'),ctx);
  vm.runInContext(tierLine+'\n'+helper,ctx);
  const scores=total=>Object.fromEntries(keys.map((key,index)=>[key,Math.floor(total/6)+(index<total%6?1:0)]));
- for(const [total,expected] of [[0,'F'],[1029,'F'],[1030,'E'],[1198,'E'],[1199,'D'],[1278,'D'],[1279,'C'],[1426,'C'],[1427,'B'],[1508,'B'],[1509,'A'],[1590,'A'],[1591,'S'],[1800,'S']])assert.equal(ctx.calculatedPlayerTier(scores(total)),expected);
+ for(const [total,expected] of [[0,'F'],[257,'F'],[258,'E'],[515,'E'],[516,'D'],[773,'D'],[774,'C'],[1157,'C'],[1158,'B'],[1295,'B'],[1296,'A'],[1535,'A'],[1536,'S'],[1800,'S']])assert.equal(ctx.calculatedPlayerTier(scores(total)),expected);
  const form={querySelector(selector){if(selector==='[name="overall_tier"]')return input;return fields[selector.match(/name="([^"]+)"/)[1]]},querySelectorAll:()=>buttons};
- ctx.wireAutomaticTier(form);assert.equal(input.value,'D');
- for(const [key,value] of Object.entries(scores(1591)))fields[key].value=String(value);
+ ctx.wireAutomaticTier(form);assert.equal(input.value,'B');
+ for(const [key,value] of Object.entries(scores(1536)))fields[key].value=String(value);
  fields.control.update();assert.equal(input.value,'S');assert.equal(buttons.filter(b=>b['aria-pressed']).length,1);
 });
