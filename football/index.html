@@ -10,13 +10,13 @@
         <link rel="stylesheet" href="./football.css">
         <script src="../config.js"></script>
         <script src="../focus.js" defer></script>
-        <script type="module" src="./client.js"></script>
+        <script type="module" src="./client.js?v=20261126-football-2"></script>
     </head>
     <body>
         <div id="footballApp" class="football-app">
             <header class="site-header">
                 <a class="brand" href="../" aria-label="Back to Bonk Critic"><span class="brand-ball" aria-hidden="true"></span>BONK CRITIC</a>
-                <div class="header-context"><span class="page-label">FOOTBALL</span><span id="connectionStatus" class="connection-status" role="status">Connecting…</span></div>
+                <div class="header-context"><span class="page-label">FOOTBALL</span><span id="connectionStatus" class="connection-status" role="status">Loading…</span></div>
             </header>
 
             <main class="football-main">
@@ -70,12 +70,12 @@
                             <div class="field name-field"><label for="displayName">Your name</label><input id="displayName" name="displayName" type="text" maxlength="24" autocomplete="nickname" placeholder="What should we call you?" required></div>
                             <form id="createRoomForm" class="room-form">
                                 <div class="field"><label for="roomName">Room name</label><input id="roomName" name="roomName" type="text" maxlength="48" autocomplete="off" placeholder="Friday night football" required></div>
-                                <button type="submit" class="button-primary">Create a room <span aria-hidden="true">↗</span></button>
+                            <button type="submit" class="button-primary" disabled>Create a room <span aria-hidden="true">↗</span></button>
                             </form>
                             <div class="form-divider"><span>or join your friends</span></div>
                             <form id="joinRoomForm" class="room-form">
                                 <div class="field"><label for="roomCode">Room code or link</label><input id="roomCode" name="roomCode" class="code-input" type="text" maxlength="240" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste a code or room link" required></div>
-                                <button type="submit" class="button-secondary">Join a room <span aria-hidden="true">→</span></button>
+                            <button type="submit" class="button-secondary" disabled>Join a room <span aria-hidden="true">→</span></button>
                             </form>
                             <p id="entryStatus" class="entry-status" role="alert"></p>
                             <p class="entry-note">Rooms are for people with the link or code.</p>

@@ -520,9 +520,14 @@ function draw(now) {
 }
 resizeCanvas(); requestAnimationFrame(draw);
 
-try {$('displayName').value = localStorage.getItem('football-display-name') || 'Guest ' + Math.floor(Math.random() * 1000);} catch {$('displayName').value = 'Guest';}
+if (!$('displayName').value.trim()) {
+    try {$('displayName').value = localStorage.getItem('football-display-name') || 'Guest ' + Math.floor(Math.random() * 1000);} catch {$('displayName').value = 'Guest';}
+}
 const initialRoom = new URL(location.href).searchParams.get('room');
 if (initialRoom) $('roomCode').value = initialRoom;
+setBusy(false);
+setText($('connectionStatus'), 'Not connected');
+$('footballApp').dataset.ready = 'true';
 (async () => {
     try {
         const session = await request('/api/session');
