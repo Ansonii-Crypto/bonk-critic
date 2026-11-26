@@ -288,6 +288,7 @@ function applyRoom(next) {
     renderQueue();
     const admin = !!self()?.admin, playing = room.status === 'playing', me = self();
     $('hostControls').hidden = !admin;
+    $('adminMatchControls').hidden = !admin;
     updateSettings(); syncPitch(room.state);
     $('startMatch').hidden = room.status !== 'lobby';
     $('abortMatch').hidden = !playing;
@@ -428,7 +429,7 @@ function returnToEntry(message = '') {
     $('entryStatus').textContent = message; setText($('connectionStatus'), 'Not connected');
     room = null; memberId = null; lastState = null; predicted = null; snapshots = []; smoothing.clear();
     seenChat.clear(); $('chatLog').replaceChildren(); $('activityLog').replaceChildren();
-    $('hostControls').hidden = true; $('chatInput').disabled = true; $('sendChat').disabled = true;
+    $('hostControls').hidden = true; $('adminMatchControls').hidden = true; $('chatInput').disabled = true; $('sendChat').disabled = true;
     lastRoomStatus = ''; lastRosterSignature = ''; settingsSignature = ''; settingsDirty = false; pendingSettingsSignature = null;
     syncPitch(null); setBusy(false); updateMatchStatus();
 }
