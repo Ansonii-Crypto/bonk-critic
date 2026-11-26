@@ -1,9 +1,11 @@
-import {FootballPhysics, FOOTBALL_CONSTANTS as C} from './physics.js';
+import {FootballPhysics, FOOTBALL_CONSTANTS as C, getPitchGeometry} from './physics.js?v=20261126-football-3';
+import {DEFAULT_MATCH_SETTINGS, SETTING_RULES, validateMatchSettings} from './settings.js';
 
 const $ = id => document.getElementById(id);
 const canvas = $('footballCanvas');
 const context = canvas.getContext('2d');
 const API = (window.APP_CONFIG?.API_URL || '').replace(/\/$/, '');
+const LOBBY_ID = 'footballdivision';
 const controls = {left: 1, right: 2, up: 4, down: 8, action: 16, action2: 32};
 const keys = new Map([
     ['ArrowLeft', 1], ['KeyA', 1], ['ArrowRight', 2], ['KeyD', 2],
@@ -20,6 +22,8 @@ let lastSnapshotAt = 0, lastPredictionAt = 0, predictionSteps = 0, tick = 0;
 let latency = 0, lastFrameAt = performance.now(), audio = null, muted = false;
 let notice = '', noticeUntil = 0, latestStatus = '', lastScores = [0, 0, 0, 0];
 let account = null, reconnecting = false;
+let settingsDirty = false, settingsSignature = '', pendingSettingsSignature = null, geometrySignature = '';
+let lastRoomStatus = '', lastRosterSignature = '';
 const smoothing = new Map();
 const seenChat = new Set();
 const viewport = {width: 730, height: 500, scale: 1, x: 0, y: 0, ratio: 1};
@@ -28,6 +32,7 @@ const self = () => room?.members.find(member => member.id === memberId);
 const isOpen = () => ready && socket?.readyState === WebSocket.OPEN;
 const editable = target => target?.closest?.('input,textarea,select,button,summary,[contenteditable="true"]');
 const clone = value => JSON.parse(JSON.stringify(value));
+const settingsFingerprint = settings => JSON.stringify(Object.keys(SETTING_RULES).map(key => settings[key] ?? DEFAULT_MATCH_SETTINGS[key]));
 
 function setText(node, text) {
     if (node && node.textContent !== String(text)) node.textContent = String(text);
@@ -58,9 +63,11 @@ function storeSeat(id, member) {
 async function request(path, body) {
     if (!API) throw Error('Football is not configured yet.');
     const token = accountToken();
+    let adminToken = '';
+    try {adminToken = sessionStorage.getItem('admin_session_token') || '';} catch {}
     const response = await fetch(API + path, {
         method: body ? 'POST' : 'GET', credentials: 'include',
-        headers: {'Content-Type': 'application/json', ...(token ? {'X-Account-Session': token} : {})},
+        headers: {'Content-Type': 'application/json', ...(token ? {'X-Account-Session': token} : {}), ...(adminToken ? {Authorization: 'Bearer ' + adminToken} : {})},
         ...(body ? {body: JSON.stringify(body)} : {}), signal: AbortSignal.timeout(12000)
     });
     const data = await response.json().catch(() => ({}));
@@ -70,15 +77,6 @@ async function request(path, body) {
         throw error;
     }
     return data;
-}
-
-function roomIdFrom(value) {
-    let id = String(value || '').trim();
-    if (/^https?:\/\//i.test(id)) {
-        try {id = new URL(id).searchParams.get('room') || '';} catch {id = '';}
-    }
-    if (!/^[A-Za-z0-9_-]{16}$/.test(id)) throw Error('Paste a room code or a football room link. Room codes are case-sensitive.');
-    return id;
 }
 
 function setBusy(value) {
@@ -142,6 +140,7 @@ function predictionInput() {
 
 function acceptState(state, serverTick = 0, inputs = []) {
     if (!state?.ball || !Array.isArray(state.discs)) return;
+    syncPitch(state);
     const now = performance.now();
     const reset = state.ni || (lastState && state.ftu > lastState.ftu + 5);
     if (reset) {snapshots = []; smoothing.clear();}
@@ -180,18 +179,33 @@ function addChat(message) {
     $('chatLog').scrollTop = $('chatLog').scrollHeight;
 }
 
+function addActivity(text) {
+    const log = $('activityLog');
+    if (!log || !text) return;
+    const row = document.createElement('p'); row.textContent = text;
+    log.append(row);
+    while (log.children.length > 12) log.firstElementChild.remove();
+    log.scrollTop = log.scrollHeight;
+}
+
 function renderRoster(team, target) {
     target.replaceChildren();
-    for (const member of room.members.filter(member => member.team === team)) {
+    for (const member of room.members.filter(member => member.team === team && (team || !member.queued))) {
         const row = document.createElement('li'), name = document.createElement('span');
         name.className = 'roster-name';
-        name.textContent = member.name + (member.id === memberId ? ' (you)' : '') + (member.host ? ' · host' : '') + (!member.connected ? ' · reconnecting' : '');
+        name.textContent = member.name + (member.id === memberId ? ' (you)' : '') + (member.admin ? ' · admin' : '') + (!member.connected ? ' · reconnecting' : '');
         name.title = member.verified ? 'Verified Bonk account' : 'Guest';
         row.append(name);
         const identity = document.createElement('span'); identity.className = 'roster-identity';
         identity.textContent = member.verified ? 'Bonk' : 'Guest';
         identity.title = member.verified ? 'Verified Bonk account' : 'Guest name'; row.append(identity);
-        if (self()?.host) {
+        if (team) {
+            const check = document.createElement('span'); check.className = 'ready-indicator';
+            check.dataset.ready = String(!!member.ready);
+            check.textContent = member.ready ? '✓ Ready' : room.status === 'playing' ? 'Playing' : 'Not ready';
+            row.append(check);
+        }
+        if (self()?.admin) {
             const actions = document.createElement('span'); actions.className = 'roster-actions';
             const select = document.createElement('select'); select.className = 'team-assignment';
             select.setAttribute('aria-label', 'Team for ' + member.name);
@@ -218,29 +232,86 @@ function renderRoster(team, target) {
     }
 }
 
+function renderQueue() {
+    const target = $('queueRoster'); target.replaceChildren();
+    const queued = room.members.filter(member => member.queued).sort((a, b) => a.queuePosition - b.queuePosition);
+    for (const member of queued) {
+        const row = document.createElement('li'), name = document.createElement('span'), preference = document.createElement('span');
+        name.className = 'roster-name'; preference.className = 'queue-preference';
+        name.textContent = member.name + (member.id === memberId ? ' (you)' : '');
+        preference.textContent = member.queueTeam ? teamName(member.queueTeam) : 'Either team';
+        row.append(name, preference); target.append(row);
+    }
+    if (!queued.length) {
+        const empty = document.createElement('li'); empty.className = 'roster-empty';
+        empty.textContent = 'Nobody waiting'; target.append(empty);
+    }
+}
+
+function buildSettingsFields() {
+    const container = $('settingsFields');
+    for (const [key, rule] of Object.entries(SETTING_RULES)) {
+        const field = document.createElement('div'), title = document.createElement('span'), input = document.createElement('input');
+        field.className = 'field setting-field'; title.className = 'setting-label'; title.id = 'label-' + key;
+        title.textContent = rule.label; input.id = 'setting-' + key; input.name = key; input.type = 'number';
+        input.min = rule.disabledValue ?? rule.min; input.max = rule.max; input.step = rule.step;
+        input.value = DEFAULT_MATCH_SETTINGS[key]; input.required = true; input.setAttribute('aria-labelledby', title.id);
+        field.append(title, input);
+        const hint = document.createElement('small'); hint.className = 'setting-hint';
+        hint.textContent = key === 'goalHeight' ? '13 by default. Use -1 to close both goals.' : rule.unit || '';
+        field.append(hint); container.append(field);
+    }
+}
+
+function updateSettings() {
+    const signature = settingsFingerprint(room.settings);
+    if (signature !== settingsSignature) {
+        // An unchanged roster/chat update must not overwrite a form being edited.
+        for (const key of Object.keys(SETTING_RULES)) $('setting-' + key).value = room.settings[key] ?? DEFAULT_MATCH_SETTINGS[key];
+        settingsDirty = false; settingsSignature = signature;
+    }
+    const disabled = room.status === 'playing' || !isOpen() || !self()?.admin || pendingSettingsSignature !== null;
+    $('matchSettingsForm').querySelectorAll('input,button').forEach(input => input.disabled = disabled);
+    $('saveSettings').disabled = disabled || !settingsDirty;
+    if ($('settingsStatus')) setText($('settingsStatus'), room.status === 'playing' ? 'Return to the lobby to change the match settings.' : settingsDirty ? 'Unsaved changes' : 'Settings apply to the next game.');
+}
+
 function applyRoom(next) {
     if (!next) return;
     const oldStatus = room?.status; room = next;
+    if (settingsFingerprint(room.settings) === pendingSettingsSignature) {settingsDirty = false; pendingSettingsSignature = null;}
     if (oldStatus !== room.status) {releaseInput(); snapshots = []; smoothing.clear(); predicted = null;}
     $('roomEntry').hidden = true; $('roomPanel').hidden = false;
     setText($('roomTitle'), room.name); setText($('roomCodeDisplay'), room.id);
-    $('roomCode').value = room.id;
-    const url = new URL(location.href); url.search = ''; url.searchParams.set('room', room.id);
-    history.replaceState(null, '', url);
+    history.replaceState(null, '', location.pathname);
     renderRoster(3, $('blueRoster')); renderRoster(2, $('redRoster')); renderRoster(0, $('spectatorRoster'));
-    const host = !!self()?.host, playing = room.status === 'playing';
-    $('hostControls').hidden = !host;
-    $('roundsToWin').value = room.settings.scoreLimit;
-    $('roundsToWin').disabled = playing || !isOpen();
+    renderQueue();
+    const admin = !!self()?.admin, playing = room.status === 'playing', me = self();
+    $('hostControls').hidden = !admin;
+    updateSettings(); syncPitch(room.state);
     $('startMatch').hidden = room.status !== 'lobby';
     $('abortMatch').hidden = !playing;
     $('rematchMatch').hidden = room.status !== 'finished';
     const both = [2, 3].every(team => room.members.some(member => member.team === team && member.connected));
     $('startMatch').disabled = !both || !isOpen(); $('rematchMatch').disabled = !both || !isOpen();
     for (const [id, team] of [['joinBlue', 3], ['joinRed', 2], ['spectate', 0]]) {
-        $(id).disabled = !isOpen() || playing || self()?.team === team
-            || (team && room.members.filter(member => member.team === team).length >= room.settings.maxPerTeam);
+        $(id).disabled = !isOpen() || (team ? me?.team === team || (me?.queued && me.queueTeam === team) : !me?.team && !me?.queued);
+        $(id).textContent = team ? playing ? 'Queue ' + teamName(team).toLowerCase() : 'Join ' + teamName(team).toLowerCase() : 'Spectate';
     }
+    $('joinQueue').disabled = !isOpen() || !!me?.team || (!!me?.queued && !me.queueTeam);
+    $('readyButton').disabled = !isOpen() || playing || !me?.team;
+    $('readyButton').setAttribute('aria-pressed', String(!!me?.ready));
+    setText($('readyButton'), me?.ready ? '✓ Ready — click to cancel' : 'Ready');
+    const active = room.members.filter(member => member.team && member.connected);
+    const waiting = active.filter(member => !member.ready).length;
+    setText($('readySummary'), playing ? (me?.queued ? 'You will join at the next kickoff with an available place.' : 'The next game starts when both teams are ready.')
+        : !both ? 'Both teams need a player.' : waiting ? active.filter(member => member.ready).length + ' / ' + active.length + ' ready. Everyone on a team must be ready.' : 'Everyone is ready. Starting…');
+    $('chatInput').disabled = !isOpen(); $('sendChat').disabled = !isOpen();
+    const rosterSignature = room.members.map(member => member.id + ':' + member.team + ':' + !!member.queued).join('|');
+    if (lastRoomStatus !== room.status) addActivity(room.status === 'playing' ? 'Game started. Blue attacks right; Red attacks left.'
+        : room.status === 'finished' ? teamName(room.winner) + ' wins. Ready up for the next game.' : 'Lobby open. Join a team and mark yourself ready.');
+    else if (lastRosterSignature && lastRosterSignature !== rosterSignature) addActivity('Teams and the next-kickoff queue have been updated.');
+    lastRoomStatus = room.status; lastRosterSignature = rosterSignature;
     for (const message of room.chat || []) addChat(message);
     if (room.state) acceptState(room.state, tick, lastInputs);
     else {
@@ -255,15 +326,16 @@ function applyRoom(next) {
 }
 
 function updateMatchStatus() {
-    let text = 'Create a room or join a friend to play.';
+    let text = 'Join football to play or watch the shared game.';
     if (room) {
-        const role = self()?.team ? 'Playing for ' + teamName(self().team) : 'Spectating';
+        const me = self();
+        const role = me?.team ? 'Playing for ' + teamName(me.team) : me?.queued ? 'Queue position ' + me.queuePosition : 'Spectating';
         if (!ready) text = reconnecting ? 'Connection interrupted. Reconnecting…' : 'Connecting to room…';
-        else if (room.status === 'lobby') text = role + '. ' + (self()?.host ? 'Put players on both teams, then start.' : 'Waiting for the host to start.');
-        else if (room.status === 'finished') text = teamName(room.winner) + ' wins. Waiting for a rematch.';
+        else if (room.status === 'lobby') text = role + '. Ready up when you want to play.';
+        else if (room.status === 'finished') text = teamName(room.winner) + ' wins. Ready up for the next game.';
         else if (lastState?.ftu >= 0) text = 'Kickoff in ' + Math.ceil(lastState.ftu / 30) + '. ' + role + '.';
         else if (lastState?.fte >= 0) text = teamName(lastState.lscr) + ' scores!';
-        else text = role + '. First to ' + room.settings.scoreLimit + '.';
+        else text = role + '. ' + (room.settings.goalHeight < 0 ? 'Goals closed — practice mode.' : 'First to ' + room.settings.scoreLimit + '.');
     }
     if (notice && performance.now() < noticeUntil) text = notice;
     if (text !== latestStatus) {latestStatus = text; setText($('matchStatus'), text);}
@@ -295,18 +367,23 @@ async function connectSession(joined) {
                 if (room) {room.status = message.status || room.status; room.winner = message.winner ?? room.winner;}
                 acceptState(message.state, message.tick, message.inputs);
             } else if (message.type === 'chat') addChat(message);
-            else if (message.type === 'notice') showNotice(message.text || 'Room updated.');
+            else if (message.type === 'notice') {showNotice(message.text || 'Lobby updated.'); addActivity(message.text);}
             else if (message.type === 'removed') {
                 storeSeat(room?.id, null); returnToEntry(message.reason || 'You left the room.');
             }
             else if (message.type === 'pong') {
                 latency = Math.max(0, Math.min(2000, performance.now() - message.sentAt));
                 setText($('connectionStatus'), 'Connected · ' + Math.round(latency) + ' ms');
-            } else if (message.type === 'error') showNotice(message.error || 'That action could not be completed.');
+            } else if (message.type === 'error') {
+                const settingsPending = pendingSettingsSignature !== null; pendingSettingsSignature = null;
+                if (room && settingsPending) {updateSettings(); setText($('settingsStatus'), message.error || 'Settings could not be saved.');}
+                showNotice(message.error || 'That action could not be completed.');
+            }
         });
         connection.addEventListener('close', event => {
             if (ownGeneration !== generation) return;
             clearTimeout(timeout); ready = false; predicted = null; releaseInput();
+            if (room) applyRoom(room);
             if (!settled) {settled = true; reject(Error('The room connection closed. Please join again.'));}
             if (leaving) return;
             if ([1008, 4001, 4002, 4003].includes(event.code)) {
@@ -319,7 +396,7 @@ async function connectSession(joined) {
 
 async function join(id, resume = false) {
     const seat = resume ? savedSeat(id) : null;
-    const joined = await request('/api/football/rooms/' + encodeURIComponent(id) + '/join', {
+    const joined = await request('/api/football/lobby', {
         displayName: $('displayName').value.trim(), ...(seat?.resumeToken ? {resumeToken: seat.resumeToken} : {})
     });
     await connectSession(joined);
@@ -350,7 +427,10 @@ function returnToEntry(message = '') {
     $('roomPanel').hidden = true; $('roomEntry').hidden = false;
     $('entryStatus').textContent = message; setText($('connectionStatus'), 'Not connected');
     room = null; memberId = null; lastState = null; predicted = null; snapshots = []; smoothing.clear();
-    seenChat.clear(); $('chatLog').replaceChildren(); setBusy(false); updateMatchStatus();
+    seenChat.clear(); $('chatLog').replaceChildren(); $('activityLog').replaceChildren();
+    $('hostControls').hidden = true; $('chatInput').disabled = true; $('sendChat').disabled = true;
+    lastRoomStatus = ''; lastRosterSignature = ''; settingsSignature = ''; settingsDirty = false; pendingSettingsSignature = null;
+    syncPitch(null); setBusy(false); updateMatchStatus();
 }
 
 async function entryAction(action) {
@@ -363,23 +443,31 @@ async function entryAction(action) {
     finally {setBusy(false);}
 }
 
-$('createRoomForm').addEventListener('submit', event => {
-    event.preventDefault(); entryAction(async () => {
-        const joined = await request('/api/football/rooms', {name: $('roomName').value.trim(), displayName: $('displayName').value.trim()});
-        await connectSession(joined);
-    });
-});
-$('joinRoomForm').addEventListener('submit', event => {event.preventDefault(); entryAction(() => join(roomIdFrom($('roomCode').value), true));});
+$('joinRoomForm').addEventListener('submit', event => {event.preventDefault(); entryAction(() => join(LOBBY_ID, true));});
 $('leaveRoom').addEventListener('click', () => {send({type: 'leave'}); storeSeat(room?.id, null); returnToEntry(); history.replaceState(null, '', location.pathname);});
 for (const [id, team] of [['joinBlue', 3], ['joinRed', 2], ['spectate', 0]]) $(id).addEventListener('click', () => send({type: 'team', team}));
+$('joinQueue').addEventListener('click', () => send({type: 'queue', team: 0}));
+$('readyButton').addEventListener('click', () => {warmAudio(); send({type: 'ready', ready: !self()?.ready});});
 for (const [id, type] of [['startMatch', 'start'], ['abortMatch', 'abort'], ['rematchMatch', 'rematch']]) $(id).addEventListener('click', () => {warmAudio(); send({type}); canvas.focus({preventScroll: true});});
-$('roundsToWin').addEventListener('change', event => send({type: 'settings', scoreLimit: Number(event.target.value)}));
+buildSettingsFields();
+$('matchSettingsForm').addEventListener('input', () => {settingsDirty = true; if (room) updateSettings();});
+$('matchSettingsForm').addEventListener('submit', event => {
+    event.preventDefault();
+    if (!self()?.admin || room.status === 'playing') return;
+    const patch = Object.fromEntries(Object.keys(SETTING_RULES).map(key => [key, Number($('setting-' + key).value)]));
+    const checked = validateMatchSettings(patch, room.settings);
+    if (checked.error) {setText($('settingsStatus'), checked.error); return;}
+    pendingSettingsSignature = settingsFingerprint(checked.settings);
+    if (send({type: 'settings', settings: checked.settings})) {updateSettings(); setText($('settingsStatus'), 'Applying settings…');}
+    else pendingSettingsSignature = null;
+});
 $('copyRoomLink').addEventListener('click', async () => {
     if (!room) return;
-    const url = new URL(location.pathname, location.origin); url.searchParams.set('room', room.id);
-    try {await navigator.clipboard.writeText(url.href); showNotice('Room link copied.');} catch {
-        $('roomCode').value = url.href; $('roomEntry').hidden = false; $('roomCode').focus(); $('roomCode').select();
-        showNotice('Copy the selected room link.');
+    const url = new URL(location.pathname, location.origin);
+    try {await navigator.clipboard.writeText(url.href); showNotice('Football link copied.');} catch {
+        let input = $('shareLink');
+        if (!input) {input = document.createElement('input'); input.id = 'shareLink'; input.readOnly = true; input.setAttribute('aria-label', 'Football link'); $('roomPanel').prepend(input);}
+        input.value = url.href; input.focus(); input.select(); showNotice('Copy the selected football link.');
     }
 });
 $('chatForm').addEventListener('submit', event => {
@@ -420,26 +508,44 @@ document.querySelectorAll('[data-control]').forEach(button => {
 setInterval(sendInput, 100);
 setInterval(() => send({type: 'ping', sentAt: performance.now()}), 2000);
 
-const pitch = document.createElement('canvas'); pitch.width = C.WIDTH; pitch.height = C.HEIGHT;
+const pitch = document.createElement('canvas');
 const paint = pitch.getContext('2d');
-paint.fillStyle = '#5a7f64'; paint.fillRect(0, 0, 730, 500);
-paint.save(); paint.beginPath(); paint.rect(30, 75, 670, 350); paint.clip();
-paint.strokeStyle = 'rgba(255,255,255,.025)'; paint.lineWidth = 24;
-for (let x = -500; x < 1250; x += 64) {paint.beginPath(); paint.moveTo(x, 500); paint.lineTo(x + 500, 0); paint.stroke();}
-paint.restore(); paint.strokeStyle = 'rgba(255,255,255,.5)'; paint.lineWidth = 1;
-paint.strokeRect(30, 75, 670, 350); paint.beginPath(); paint.moveTo(365, 75); paint.lineTo(365, 425); paint.stroke();
-paint.beginPath(); paint.arc(365, 250, 50, 0, Math.PI * 2); paint.stroke();
-paint.strokeRect(30, 115, 55, 270); paint.strokeRect(645, 115, 55, 270);
-for (const [x, colour] of [[30, '#448aff'], [700, '#d32f2f']]) for (const y of [178.5, 321.5]) {
-    paint.beginPath(); paint.arc(x, y, 8, 0, Math.PI * 2); paint.fillStyle = colour; paint.fill(); paint.stroke();
+let geometry;
+
+function syncPitch(state) {
+    const next = getPitchGeometry(state || {settings: room?.settings || DEFAULT_MATCH_SETTINGS});
+    const signature = JSON.stringify(next.pixels);
+    if (signature === geometrySignature) return;
+    geometry = next; geometrySignature = signature;
+    const g = geometry.pixels;
+    pitch.width = g.width; pitch.height = g.height;
+    canvas.parentElement.style.setProperty('--pitch-ratio', g.width + ' / ' + g.height);
+    canvas.parentElement.style.setProperty('--pitch-ratio-value', String(g.width / g.height));
+    paint.fillStyle = '#5a7f64'; paint.fillRect(0, 0, g.width, g.height);
+    paint.save(); paint.beginPath(); paint.rect(g.left, g.top, g.right - g.left, g.bottom - g.top); paint.clip();
+    paint.strokeStyle = 'rgba(255,255,255,.025)'; paint.lineWidth = 24;
+    for (let x = -g.height; x < g.width + g.height; x += 64) {paint.beginPath(); paint.moveTo(x, g.height); paint.lineTo(x + g.height, 0); paint.stroke();}
+    paint.restore(); paint.strokeStyle = 'rgba(255,255,255,.5)'; paint.lineWidth = 1;
+    paint.strokeRect(g.left, g.top, g.right - g.left, g.bottom - g.top);
+    paint.beginPath(); paint.moveTo(g.centerX, g.top); paint.lineTo(g.centerX, g.bottom); paint.stroke();
+    paint.beginPath(); paint.arc(g.centerX, g.centerY, Math.min(50, (g.bottom - g.top) / 4), 0, Math.PI * 2); paint.stroke();
+    const boxHeight = Math.min(270, g.bottom - g.top - 30), boxWidth = Math.min(55, (g.right - g.left) / 5);
+    paint.strokeRect(g.left, g.centerY - boxHeight / 2, boxWidth, boxHeight);
+    paint.strokeRect(g.right - boxWidth, g.centerY - boxHeight / 2, boxWidth, boxHeight);
+    for (const post of g.posts) {
+        paint.beginPath(); paint.arc(post.x, post.y, post.radius, 0, Math.PI * 2);
+        paint.fillStyle = post.x < g.centerX ? '#448aff' : '#d32f2f'; paint.fill(); paint.stroke();
+    }
+    resizeCanvas();
 }
 
 function resizeCanvas() {
     const bounds = canvas.getBoundingClientRect(), ratio = Math.min(2, window.devicePixelRatio || 1);
     canvas.width = Math.max(1, Math.round(bounds.width * ratio)); canvas.height = Math.max(1, Math.round(bounds.height * ratio));
     viewport.width = bounds.width; viewport.height = bounds.height; viewport.ratio = ratio;
-    viewport.scale = Math.min(bounds.width / C.WIDTH, bounds.height / C.HEIGHT);
-    viewport.x = (bounds.width - C.WIDTH * viewport.scale) / 2; viewport.y = (bounds.height - C.HEIGHT * viewport.scale) / 2;
+    const g = geometry?.pixels || {width: C.WIDTH, height: C.HEIGHT};
+    viewport.scale = Math.min(bounds.width / g.width, bounds.height / g.height);
+    viewport.x = (bounds.width - g.width * viewport.scale) / 2; viewport.y = (bounds.height - g.height * viewport.scale) / 2;
 }
 new ResizeObserver(resizeCanvas).observe(canvas);
 
@@ -474,21 +580,22 @@ function draw(now) {
     context.fillStyle = '#5a7f64'; context.fillRect(0, 0, viewport.width, viewport.height);
     context.translate(viewport.x, viewport.y); context.scale(viewport.scale, viewport.scale);
     context.drawImage(pitch, 0, 0);
+    const g = geometry.pixels;
     const display = interpolated(now), authoritative = lastState;
     const scores = authoritative?.scores || [0, 0, 0, 0];
     context.fillStyle = '#ffffff'; context.textBaseline = 'middle';
     context.shadowColor = 'rgba(0,0,0,.35)'; context.shadowBlur = 4; context.shadowOffsetY = 2;
-    context.font = '40px "Trebuchet MS", sans-serif'; context.textAlign = 'right'; context.fillText(scores[3], 358, 30);
-    context.textAlign = 'left'; context.fillText(scores[2], 374, 30);
-    context.font = '17px "Trebuchet MS", sans-serif'; context.textAlign = 'right'; context.fillText('Blue', 357, 55);
-    context.textAlign = 'left'; context.fillText('Red', 375, 55); context.shadowBlur = 0; context.shadowOffsetY = 0;
+    context.font = '40px "Trebuchet MS", sans-serif'; context.textAlign = 'right'; context.fillText(scores[3], g.centerX - 7, 30);
+    context.textAlign = 'left'; context.fillText(scores[2], g.centerX + 9, 30);
+    context.font = '17px "Trebuchet MS", sans-serif'; context.textAlign = 'right'; context.fillText('Blue', g.centerX - 8, 55);
+    context.textAlign = 'left'; context.fillText('Red', g.centerX + 10, 55); context.shadowBlur = 0; context.shadowOffsetY = 0;
     if (display) {
         const ownSlot = self()?.slot;
         display.discs.forEach((source, slot) => {
             if (!source) return;
             const disc = predicted?.discs[slot] && slot === ownSlot ? smoothed('self', predicted.discs[slot], dt) : source;
-            const x = disc.x * C.PPM, y = disc.y * C.PPM, blue = disc.team === 3;
-            context.beginPath(); context.arc(x, y, 11, 0, Math.PI * 2);
+            const x = disc.x * geometry.ppm, y = disc.y * geometry.ppm, blue = disc.team === 3;
+            context.beginPath(); context.arc(x, y, g.playerRadius, 0, Math.PI * 2);
             context.fillStyle = blue ? '#2d69b2' : '#ad3636'; context.fill();
             const action = slot === ownSlot ? flags & 16 : (lastInputs[slot] || 0) & 16;
             context.strokeStyle = action ? '#ffffff' : blue ? '#448aff' : '#d32f2f'; context.lineWidth = 2.5; context.stroke();
@@ -496,36 +603,35 @@ function draw(now) {
             context.fillStyle = '#ffffff'; context.font = 'bold 9px Arial, sans-serif'; context.textAlign = 'center';
             context.fillText(Array.from(member?.name || '?')[0].toUpperCase(), x, y + 0.5);
             context.font = '9px Arial, sans-serif'; context.fillStyle = 'rgba(255,255,255,.9)';
-            context.fillText(member?.name || authoritative.players[slot]?.name || 'Player', x, y + 22, 105);
-            if (slot === ownSlot) {context.beginPath(); context.moveTo(x - 3, y + 29); context.lineTo(x + 3, y + 29); context.lineTo(x, y + 25); context.closePath(); context.fill();}
+            context.fillText(member?.name || authoritative.players[slot]?.name || 'Player', x, y + g.playerRadius + 11, 105);
+            if (slot === ownSlot) {context.beginPath(); context.moveTo(x - 3, y + g.playerRadius + 18); context.lineTo(x + 3, y + g.playerRadius + 18); context.lineTo(x, y + g.playerRadius + 14); context.closePath(); context.fill();}
         });
         const ball = predicted?.ball && self()?.team ? smoothed('ball', predicted.ball, dt) : display.ball;
-        context.beginPath(); context.arc(ball.x * C.PPM, ball.y * C.PPM, 7.7, 0, Math.PI * 2);
+        context.beginPath(); context.arc(ball.x * geometry.ppm, ball.y * geometry.ppm, g.ballRadius, 0, Math.PI * 2);
         context.fillStyle = '#ffffff'; context.fill();
     }
     let banner = '', caption = '';
-    if (!room) {banner = 'FOOTBALL'; caption = 'Create a room and share the link with a friend.';}
+    if (!room) {banner = 'FOOTBALL'; caption = 'One pitch. Join the lobby and play.';}
     else if (!ready) {banner = reconnecting ? 'RECONNECTING' : 'CONNECTING'; caption = 'Waiting for the room…';}
-    else if (room.status === 'lobby') {banner = 'WAITING FOR PLAYERS'; caption = 'Blue attacks right. Red attacks left.';}
-    else if (room.status === 'finished') {banner = teamName(room.winner).toUpperCase() + ' TEAM WINS'; caption = 'First to ' + room.settings.scoreLimit;}
+    else if (room.status === 'lobby') {banner = 'LOBBY'; caption = 'Join a team. Ready up to start.';}
+    else if (room.status === 'finished') {banner = teamName(room.winner).toUpperCase() + ' TEAM WINS'; caption = 'Ready up for the next game.';}
     else if (authoritative?.ftu >= 0) {banner = String(Math.ceil(authoritative.ftu / 30)); caption = 'ROUND STARTS IN';}
     else if (authoritative?.fte >= 0) {banner = teamName(authoritative.lscr).toUpperCase() + ' TEAM SCORES'; caption = 'Next kickoff shortly';}
     if (banner) {
         context.fillStyle = '#ffffff'; context.textAlign = 'center'; context.shadowColor = 'rgba(0,0,0,.35)'; context.shadowBlur = 6;
         context.font = /^\d+$/.test(banner) ? '72px "Trebuchet MS", sans-serif' : 'bold 28px "Trebuchet MS", sans-serif';
-        context.fillText(banner, 365, 237, 600); context.font = '14px "Trebuchet MS", sans-serif'; context.fillText(caption, 365, 281, 600);
+        context.fillText(banner, g.centerX, g.centerY - 13, g.width - 100); context.font = '14px "Trebuchet MS", sans-serif'; context.fillText(caption, g.centerX, g.centerY + 31, g.width - 100);
         context.shadowBlur = 0;
     }
     updateMatchStatus(); requestAnimationFrame(draw);
 }
-resizeCanvas(); requestAnimationFrame(draw);
+syncPitch(null); resizeCanvas(); requestAnimationFrame(draw);
 
 if (!$('displayName').value.trim()) {
     try {$('displayName').value = localStorage.getItem('football-display-name') || 'Guest ' + Math.floor(Math.random() * 1000);} catch {$('displayName').value = 'Guest';}
 }
-const initialRoom = new URL(location.href).searchParams.get('room');
-if (initialRoom) $('roomCode').value = initialRoom;
 setBusy(false);
+$('chatInput').disabled = true; $('sendChat').disabled = true;
 setText($('connectionStatus'), 'Not connected');
 $('footballApp').dataset.ready = 'true';
 (async () => {
@@ -533,14 +639,9 @@ $('footballApp').dataset.ready = 'true';
         const session = await request('/api/session');
         if (session.user) {account = session.user; $('displayName').value = account.username; $('displayName').readOnly = true; $('displayName').title = 'Using your verified Bonk account';}
     } catch {}
-    if (initialRoom) {
+    if (savedSeat(LOBBY_ID)?.resumeToken) {
         try {
-            const id = roomIdFrom(initialRoom);
-            if (savedSeat(id)?.resumeToken) await entryAction(() => join(id, true));
-            else {
-                const data = await request('/api/football/rooms/' + id);
-                $('entryStatus').textContent = 'Join ' + (data.room?.name || data.name || 'this room') + ' using the form below.';
-            }
+            await entryAction(() => join(LOBBY_ID, true));
         } catch (error) {$('entryStatus').textContent = error.message;}
     }
 })();

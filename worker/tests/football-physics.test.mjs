@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import test from 'node:test';
-import {FootballPhysics, FOOTBALL_CONSTANTS as C, createState} from '../../football/physics.js';
+import {FootballPhysics, FOOTBALL_CONSTANTS as C, createState, getPitchGeometry} from '../../football/physics.js';
+import {DEFAULT_MATCH_SETTINGS, SETTING_RULES, validateMatchSettings} from '../../football/settings.js';
 
 const players = [{id: 0, team: 3, name: 'Blue'}, {id: 1, team: 2, name: 'Red'}];
 const approximately = (actual, expected, tolerance = 1e-9) => {
@@ -215,3 +216,176 @@ for (const scenario of nativeFixtures.scenarios) {
         assert.deepEqual(JSON.parse(JSON.stringify(state)), scenario.expected);
     });
 }
+
+test('match settings validate finite numeric patches atomically and preserve current values', () => {
+    const current = {...DEFAULT_MATCH_SETTINGS, scoreLimit: 5, maxPerTeam: 8};
+    const patch = {kickImpulse: 22.5, moveForce: 64};
+    const result = validateMatchSettings(patch, current);
+    assert.equal(result.error, null);
+    assert.deepEqual(result.settings, {...DEFAULT_MATCH_SETTINGS, scoreLimit: 5, kickImpulse: 22.5, moveForce: 64});
+    assert.equal(current.maxPerTeam, 8);
+    assert.equal(current.kickImpulse, 15);
+    assert.deepEqual(patch, {kickImpulse: 22.5, moveForce: 64});
+    for (const invalid of [null, [], 2, 'settings']) assert.equal(validateMatchSettings(invalid).settings, null);
+    assert.match(validateMatchSettings({maxPerTeam: 8}).error, /Unknown match setting/);
+    assert.match(validateMatchSettings({moveForce: 64, secret: 1}).error, /Unknown match setting/);
+    for (const key of Object.keys(DEFAULT_MATCH_SETTINGS)) {
+        for (const invalid of [NaN, Infinity, -Infinity, null, '12', true]) {
+            const rejected = validateMatchSettings({[key]: invalid});
+            assert.equal(rejected.settings, null, `${key} rejects ${String(invalid)}`);
+            assert.match(rejected.error, /finite number/);
+        }
+    }
+});
+
+test('match setting bounds, score integers, disabled goals, and dependent geometry are checked', () => {
+    for (const [key, rule] of Object.entries(SETTING_RULES)) {
+        assert.equal(typeof rule.label, 'string');
+        assert.equal(typeof rule.unit, 'string');
+        assert.ok(rule.step > 0 && rule.min < rule.max);
+        for (const value of [rule.min - 10, rule.max + 10]) {
+            assert.ok(validateMatchSettings({[key]: value}).error, `${key} rejects ${value}`);
+        }
+    }
+    assert.ok(validateMatchSettings({scoreLimit: 2.5}).error);
+    for (const goalHeight of [-2, -0.5, 0, 0.5]) assert.ok(validateMatchSettings({goalHeight}).error);
+    assert.equal(validateMatchSettings({goalHeight: -1}).error, null);
+    assert.ok(validateMatchSettings({goalHeight: 40}).error, 'opening cannot exceed the current inner height');
+    assert.equal(validateMatchSettings({goalHeight: 40, pitchHeight: 700}).error, null);
+    assert.equal(validateMatchSettings({pitchHeight: 300}).error, null);
+    assert.throws(() => createState(players, {settings: {ballRadius: -1}}), RangeError);
+    assert.deepEqual(createState(players, {settings: DEFAULT_MATCH_SETTINGS}), createState(players));
+});
+
+test('custom radii scale kick reach while custom movement force and kick impulse are applied', () => {
+    const physics = new FootballPhysics();
+    const settings = {playerRadius: 1.5, ballRadius: 1.2, moveForce: 64, kickImpulse: 18};
+    const state = createState([players[0]], {settings, kickoffTicks: -1});
+    Object.assign(state.discs[0], {x: 20, y: 22, xv: 0, yv: 0});
+    Object.assign(state.ball, {x: 23, y: 22, xv: 0, yv: 0});
+    const next = physics.step(state, [{right: true, action: true}]);
+    approximately(next.ball.xv, 18 / C.BALL_MASS * 0.98);
+    approximately(next.discs[0].xv, 64 * 0.7 / C.PLAYER_MASS * C.DT * 0.92);
+    assert.equal(next.discs[0].kickReady, false);
+    const outside = structuredClone(state);
+    outside.ball.x = 23.31;
+    const missed = physics.step(outside, [{action: true}]);
+    approximately(missed.ball.xv, 0);
+    assert.equal(missed.discs[0].kickReady, true);
+    const geometry = getPitchGeometry(next);
+    approximately(geometry.world.ballRadius, 1.2);
+    approximately(geometry.world.playerRadius, 1.5);
+    approximately(geometry.pixels.ballRadius, 13.2);
+});
+
+test('custom ball and player radii change real Box2D wall and post contacts', () => {
+    const physics = new FootballPhysics();
+    const settings = {ballRadius: 1.2, playerRadius: 1.5};
+    const state = createState([players[0]], {settings, kickoffTicks: -1});
+    const geometry = getPitchGeometry(state).world;
+    Object.assign(state.ball, {x: 40, y: geometry.top + 1.2 + 0.06, xv: 0, yv: -15});
+    Object.assign(state.discs[0], {x: geometry.posts[0].x + 2.5, y: geometry.posts[0].y, xv: -12, yv: 0});
+    const next = physics.step(state, [{}]);
+    assert.ok(next.ball.yv > 0, 'larger ball meets the top wall sooner');
+    assert.ok(next.ball.y >= geometry.top + 1.2 - 0.03);
+    assert.ok(next.discs[0].xv > 0, 'larger player meets the circular post sooner');
+});
+
+test('custom pitch dimensions set geometry, proportional spawns, player clamps, and goal boundaries', () => {
+    const physics = new FootballPhysics();
+    const settings = {pitchWidth: 1000, pitchHeight: 700, goalHeight: 18, playerRadius: 1.5};
+    const state = createState(players, {settings, kickoffTicks: -1});
+    const geometry = getPitchGeometry(state);
+    assert.equal(geometry.pixels.width, 1000);
+    assert.equal(geometry.pixels.height, 700);
+    assert.equal(geometry.pixels.right, 970);
+    assert.equal(geometry.pixels.bottom, 625);
+    assert.equal(geometry.pixels.goalTop, 251);
+    assert.equal(geometry.pixels.goalBottom, 449);
+    approximately(state.ball.x, 500 / C.PPM);
+    approximately(state.ball.y, 350 / C.PPM);
+    approximately(state.discs[0].x * C.PPM, 115 * (1000 / 730));
+    Object.assign(state.discs[0], {x: 200, y: 200, xv: 8, yv: 8});
+    Object.assign(state.ball, {x: geometry.world.right - 0.1, xv: 20, yv: 0});
+    const next = physics.step(state);
+    assert.equal(next.scores[3], 1, 'blue scores at the custom right goal');
+    approximately(next.discs[0].x, 1000 / C.PPM - 1.5);
+    approximately(next.discs[0].y, 700 / C.PPM - 1.5);
+    approximately(next.discs[0].xv, 0);
+    approximately(next.discs[0].yv, 0);
+});
+
+test('goal height -1 closes both side walls and disables all scoring', () => {
+    const physics = new FootballPhysics();
+    for (const side of ['left', 'right']) {
+        const state = createState([], {settings: {goalHeight: -1}, kickoffTicks: -1});
+        const geometry = getPitchGeometry(state);
+        assert.equal(geometry.goalEnabled, false);
+        assert.deepEqual(geometry.pixels.posts, []);
+        assert.equal(geometry.pixels.goalTop, 250);
+        const direction = side === 'left' ? -1 : 1;
+        Object.assign(state.ball, {x: geometry.world[side] - direction, xv: direction * 25});
+        const next = physics.step(state);
+        assert.ok(next.ball.xv * direction < 0, `${side} former goal mouth reflects the ball`);
+        assert.deepEqual(next.scores, [0, 0, 0, 0]);
+        assert.equal(next.fte, -1);
+        assert.equal(next.sts.some(sound => sound.i === 'footGoal'), false);
+        // Even an externally restored checkpoint outside the pitch must not
+        // accidentally trigger native x-only goal detection in this mode.
+        next.ball.x = side === 'left' ? 0 : C.WIDTH / C.PPM;
+        const restored = physics.step(next);
+        assert.deepEqual(restored.scores, [0, 0, 0, 0]);
+        assert.equal(restored.fte, -1);
+    }
+});
+
+test('custom goal opening changes physical side-wall and post locations', () => {
+    const physics = new FootballPhysics();
+    const state = createState([], {settings: {goalHeight: 6}, kickoffTicks: -1});
+    const geometry = getPitchGeometry(state).world;
+    Object.assign(state.ball, {x: geometry.left + 1, y: 250 / C.PPM - 5, xv: -25, yv: 0});
+    const next = physics.step(state);
+    assert.ok(next.ball.xv > 0, 'ball reflects where the smaller opening has a side wall');
+    assert.equal(next.scores[2], 0);
+    approximately(geometry.posts[0].y, 250 / C.PPM - 3);
+});
+
+test('custom settings survive JSON checkpoints and automatic kickoffs without leaking between worlds', () => {
+    const settings = {scoreLimit: 7, goalHeight: 9, moveForce: 48, kickImpulse: 20, ballRadius: 0.9, playerRadius: 1.2, pitchWidth: 900, pitchHeight: 600};
+    const physics = new FootballPhysics();
+    let state = createState(players, {settings, seed: 77, kickoffTicks: -1});
+    const expected = {...DEFAULT_MATCH_SETTINGS, ...settings};
+    state.scores[2] = 2;
+    state = physics.step(JSON.parse(JSON.stringify(state)), [{right: true}]);
+    assert.deepEqual(state.settings, expected);
+    const originalVelocity = state.discs[0].xv;
+    const native = physics.step(active([players[0]]), [{right: true}]);
+    approximately(native.discs[0].xv, originalVelocity * (32 / 48));
+    assert.equal(native.settings, undefined);
+    state.fte = 0;
+    state = physics.step(state);
+    assert.deepEqual(state.settings, expected);
+    assert.equal(state.ftu, 120);
+    assert.equal(state.seed, 77);
+    assert.equal(state.scores[2], 2);
+    approximately(state.ball.x, 450 / C.PPM);
+    approximately(state.ball.y, 300 / C.PPM);
+    assert.equal(state.goalHeight, 9);
+});
+
+test('geometry previews accept settings-only states and zero-strength kicks stay finite', () => {
+    const geometry = getPitchGeometry({settings: {pitchWidth: 900, pitchHeight: 600, goalHeight: -1}});
+    assert.equal(geometry.ppm, 11);
+    assert.equal(geometry.pixels.width, 900);
+    assert.equal(geometry.pixels.top, 75);
+    assert.equal(geometry.goalEnabled, false);
+    assert.equal(getPitchGeometry().pixels.width, 730);
+    const state = createState([players[0]], {settings: {moveForce: 0, kickImpulse: 0}, kickoffTicks: -1});
+    Object.assign(state.ball, {...state.discs[0]});
+    const next = new FootballPhysics().step(state, [{right: true, action: true}]);
+    for (const body of [next.ball, ...next.discs]) {
+        for (const key of ['x', 'y', 'xv', 'yv']) assert.ok(Number.isFinite(body[key]));
+    }
+    approximately(next.ball.xv, 0);
+    approximately(next.discs[0].xv, 0);
+});

@@ -5,34 +5,59 @@
         <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
         <meta name="theme-color" content="#fff9e9">
         <meta name="robots" content="noindex, nofollow">
-        <meta name="description" content="Unlisted football rooms for you and your friends on Bonk Critic.">
+        <meta name="description" content="An unlisted football hub for you and your friends on Bonk Critic.">
         <title>Football | Bonk Critic</title>
-        <link rel="stylesheet" href="./football.css">
+        <link rel="stylesheet" href="./football.css?v=20261126-football-3">
         <script src="../config.js"></script>
         <script src="../focus.js" defer></script>
-        <script type="module" src="./client.js?v=20261126-football-2"></script>
+        <script type="module" src="./client.js?v=20261126-football-3"></script>
     </head>
     <body>
         <div id="footballApp" class="football-app">
             <header class="site-header">
-                <a class="brand" href="../" aria-label="Back to Bonk Critic"><span class="brand-ball" aria-hidden="true"></span>BONK CRITIC</a>
-                <div class="header-context"><span class="page-label">FOOTBALL</span><span id="connectionStatus" class="connection-status" role="status">Loading…</span></div>
+                <a class="brand" href="../" aria-label="Back to Bonk Critic">
+                    <span class="brand-ball" aria-hidden="true"></span>BONK CRITIC
+                </a>
+                <div class="header-context">
+                    <span class="page-label">FOOTBALL</span>
+                    <span id="connectionStatus" class="connection-status" role="status">Loading…</span>
+                </div>
             </header>
 
             <main class="football-main">
                 <div class="page-heading">
-                    <div><p class="eyebrow">A PITCH OF YOUR OWN</p><h1>Football with friends.</h1></div>
-                    <p class="heading-note">Create a room. Pick a side. Make it count.</p>
+                    <div>
+                        <p class="eyebrow">THE FOOTBALL HUB</p>
+                        <h1>One pitch. Everyone welcome.</h1>
+                    </div>
+                    <p class="heading-note">Choose your team, ready up, and join the next kickoff.</p>
                 </div>
 
                 <div class="game-layout">
+                    <aside class="chat-sidebar" aria-label="Room messaging">
+                        <section class="panel chat-panel" aria-labelledby="chatTitle">
+                            <div class="panel-heading">
+                                <p class="eyebrow">FROM THE SIDELINES</p>
+                                <h2 id="chatTitle">Room chat</h2>
+                            </div>
+                            <div id="chatLog" class="chat-log" role="log" aria-live="polite" aria-relevant="additions" aria-label="Room messages"></div>
+                            <form id="chatForm" class="chat-form">
+                                <label class="sr-only" for="chatInput">Message the room</label>
+                                <input id="chatInput" name="chatInput" type="text" maxlength="180" autocomplete="off" placeholder="Message the room…" disabled>
+                                <button id="sendChat" type="submit" class="button-small button-secondary" aria-label="Send message" disabled>Send</button>
+                            </form>
+                        </section>
+                    </aside>
+
                     <section class="arena-column" aria-label="Football pitch">
-                        <div class="arena-frame">
+                        <div id="pitchWrap" class="arena-frame">
                             <canvas id="footballCanvas" width="730" height="500" tabindex="0" aria-label="Football game. Blue team attacks from the left; red team attacks from the right.">Your browser needs canvas support to play football.</canvas>
                         </div>
-                        <div class="sr-only" aria-live="polite" aria-atomic="true">Score: Blue <span id="scoreBlue">0</span>, Red <span id="scoreRed">0</span>.</div>
+                        <div class="sr-only" aria-live="polite" aria-atomic="true">
+                            Score: Blue <span id="scoreBlue">0</span>, Red <span id="scoreRed">0</span>.
+                        </div>
                         <div class="pitch-bar">
-                            <p id="matchStatus" role="status">Create a room or join a friend to play.</p>
+                            <p id="matchStatus" role="status">Join football to take your place in the lobby.</p>
                             <div class="pitch-actions" role="group" aria-label="Game options">
                                 <button id="muteSound" type="button" class="button-small button-secondary" aria-pressed="false">Sound on</button>
                                 <button id="fullscreenToggle" type="button" class="button-small button-secondary">Fullscreen</button>
@@ -55,51 +80,125 @@
                         <details class="controls-help">
                             <summary><span>How to play</span><span class="help-preview">Move · Kick · Brake</span></summary>
                             <div class="controls-grid">
-                                <div><span class="control-label">MOVE</span><p><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or arrow keys</p></div>
-                                <div><span class="control-label">KICK</span><p><kbd>X</kbd>, <kbd>Space</kbd> or <kbd>Shift</kbd></p></div>
-                                <div><span class="control-label">BRAKE</span><p><kbd>Z</kbd> to slow down</p></div>
-                                <div><span class="control-label">CHAT / FOCUS</span><p><kbd>Enter</kbd> to chat · <kbd>Esc</kbd> to release controls</p></div>
+                                <div>
+                                    <span class="control-label">MOVE</span>
+                                    <p><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or arrow keys</p>
+                                </div>
+                                <div>
+                                    <span class="control-label">KICK</span>
+                                    <p><kbd>X</kbd>, <kbd>Space</kbd> or <kbd>Shift</kbd></p>
+                                </div>
+                                <div>
+                                    <span class="control-label">BRAKE</span>
+                                    <p><kbd>Z</kbd> to slow down</p>
+                                </div>
+                                <div>
+                                    <span class="control-label">CHAT / FOCUS</span>
+                                    <p><kbd>Enter</kbd> to chat · <kbd>Esc</kbd> to release controls</p>
+                                </div>
                             </div>
                             <p class="help-note">Click the pitch to focus the game. On a touch screen, use the controls below the pitch.</p>
                         </details>
+
+                        <details id="hostControls" class="panel admin-panel" hidden>
+                            <summary><span>Site admin</span><span class="admin-preview">Pitch &amp; match settings</span></summary>
+                            <div class="admin-controls">
+                                <form id="matchSettingsForm" class="match-settings-form">
+                                    <div id="settingsFields" class="settings-fields"></div>
+                                    <p id="settingsStatus" class="settings-status" role="status"></p>
+                                    <div class="settings-actions">
+                                        <p>Settings apply to this shared pitch.</p>
+                                        <button id="saveSettings" type="submit" class="button-secondary button-small">Save settings</button>
+                                    </div>
+                                </form>
+                                <div class="admin-match-actions" role="group" aria-label="Admin match controls">
+                                    <button id="startMatch" type="button" class="button-primary" hidden>Start match <span aria-hidden="true">→</span></button>
+                                    <button id="abortMatch" type="button" class="button-danger" hidden>Abort match</button>
+                                    <button id="rematchMatch" type="button" class="button-primary" hidden>Play again <span aria-hidden="true">↻</span></button>
+                                </div>
+                            </div>
+                        </details>
                     </section>
 
-                    <aside class="room-sidebar" aria-label="Room and players">
+                    <aside class="room-sidebar" aria-label="Lobby and next kickoff">
                         <section id="roomEntry" class="panel entry-panel" aria-labelledby="entryTitle">
-                            <div class="panel-intro"><p class="eyebrow">UNLISTED ROOMS</p><h2 id="entryTitle">Get a game going.</h2><p>Invite a friend with a room link, then choose your teams.</p></div>
-                            <div class="field name-field"><label for="displayName">Your name</label><input id="displayName" name="displayName" type="text" maxlength="24" autocomplete="nickname" placeholder="What should we call you?" required></div>
-                            <form id="createRoomForm" class="room-form">
-                                <div class="field"><label for="roomName">Room name</label><input id="roomName" name="roomName" type="text" maxlength="48" autocomplete="off" placeholder="Friday night football" required></div>
-                            <button type="submit" class="button-primary" disabled>Create a room <span aria-hidden="true">↗</span></button>
-                            </form>
-                            <div class="form-divider"><span>or join your friends</span></div>
+                            <div class="panel-intro">
+                                <p class="eyebrow">TAKE YOUR PLACE</p>
+                                <h2 id="entryTitle">Join the game.</h2>
+                                <p>Everyone shares this pitch. Join the lobby to choose a team or watch the match.</p>
+                            </div>
                             <form id="joinRoomForm" class="room-form">
-                                <div class="field"><label for="roomCode">Room code or link</label><input id="roomCode" name="roomCode" class="code-input" type="text" maxlength="240" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste a code or room link" required></div>
-                            <button type="submit" class="button-secondary" disabled>Join a room <span aria-hidden="true">→</span></button>
+                                <div class="field">
+                                    <label for="displayName">Your name</label>
+                                    <input id="displayName" name="displayName" type="text" maxlength="24" autocomplete="nickname" placeholder="What should we call you?" required>
+                                </div>
+                                <button type="submit" class="button-primary" disabled>Join football <span aria-hidden="true">→</span></button>
                             </form>
                             <p id="entryStatus" class="entry-status" role="alert"></p>
-                            <p class="entry-note">Rooms are for people with the link or code.</p>
                         </section>
 
                         <section id="roomPanel" class="panel room-panel" aria-labelledby="roomTitle" hidden>
-                            <div class="room-heading"><p class="eyebrow">YOUR ROOM</p><h2 id="roomTitle">Football</h2><div class="room-code-row"><span class="room-code-label">ROOM CODE</span><strong id="roomCodeDisplay"></strong></div></div>
-                            <div class="room-actions"><button id="copyRoomLink" type="button" class="button-secondary button-small">Copy invite link</button><button id="leaveRoom" type="button" class="button-quiet button-small">Leave</button></div>
-
-                            <div class="team-lists">
-                                <section class="team-section blue-team" aria-labelledby="blueTeamTitle"><div class="team-heading"><h3 id="blueTeamTitle"><span class="team-dot" aria-hidden="true"></span>Blue team</h3><button id="joinBlue" type="button" class="button-small button-team">Join blue</button></div><ul id="blueRoster" class="roster" aria-label="Blue team players"></ul></section>
-                                <section class="team-section red-team" aria-labelledby="redTeamTitle"><div class="team-heading"><h3 id="redTeamTitle"><span class="team-dot" aria-hidden="true"></span>Red team</h3><button id="joinRed" type="button" class="button-small button-team">Join red</button></div><ul id="redRoster" class="roster" aria-label="Red team players"></ul></section>
-                                <section class="team-section spectator-team" aria-labelledby="spectatorsTitle"><div class="team-heading"><h3 id="spectatorsTitle">Spectators</h3><button id="spectate" type="button" class="button-small button-secondary">Spectate</button></div><ul id="spectatorRoster" class="roster" aria-label="Spectators"></ul></section>
+                            <div class="room-heading">
+                                <p class="eyebrow">THE SHARED PITCH</p>
+                                <h2 id="roomTitle">Football lobby</h2>
+                                <span id="roomCodeDisplay" class="sr-only"></span>
+                            </div>
+                            <div class="room-actions">
+                                <button id="copyRoomLink" type="button" class="button-secondary button-small">Invite friends</button>
+                                <button id="leaveRoom" type="button" class="button-quiet button-small">Leave</button>
                             </div>
 
-                            <section id="hostControls" class="host-controls" aria-labelledby="hostControlsTitle" hidden>
-                                <h3 id="hostControlsTitle">Match settings <span>HOST</span></h3>
-                                <div class="rounds-field"><label for="roundsToWin">Rounds to win</label><select id="roundsToWin" name="roundsToWin"><option value="1">1</option><option value="2">2</option><option value="3" selected>3</option><option value="4">4</option><option value="5">5</option><option value="6">6</option><option value="7">7</option><option value="8">8</option><option value="9">9</option></select></div>
-                                <button id="startMatch" type="button" class="button-primary">Start match <span aria-hidden="true">→</span></button>
-                                <button id="abortMatch" type="button" class="button-danger" hidden>Abort match</button>
-                                <button id="rematchMatch" type="button" class="button-primary" hidden>Play again <span aria-hidden="true">↻</span></button>
+                            <section id="lobbyPanel" class="lobby-panel" aria-labelledby="lobbyTitle">
+                                <div class="section-heading">
+                                    <h3 id="lobbyTitle">Teams</h3>
+                                    <span class="section-note">LOBBY</span>
+                                </div>
+                                <div class="team-lists">
+                                    <section class="team-section blue-team" aria-labelledby="blueTeamTitle">
+                                        <div class="team-heading">
+                                            <h3 id="blueTeamTitle"><span class="team-dot" aria-hidden="true"></span>Blue team</h3>
+                                            <button id="joinBlue" type="button" class="button-small button-team">Join blue</button>
+                                        </div>
+                                        <ul id="blueRoster" class="roster" aria-label="Blue team players"></ul>
+                                    </section>
+                                    <section class="team-section red-team" aria-labelledby="redTeamTitle">
+                                        <div class="team-heading">
+                                            <h3 id="redTeamTitle"><span class="team-dot" aria-hidden="true"></span>Red team</h3>
+                                            <button id="joinRed" type="button" class="button-small button-team">Join red</button>
+                                        </div>
+                                        <ul id="redRoster" class="roster" aria-label="Red team players"></ul>
+                                    </section>
+                                    <section class="team-section spectator-team" aria-labelledby="spectatorsTitle">
+                                        <div class="team-heading">
+                                            <h3 id="spectatorsTitle">Spectators</h3>
+                                            <button id="spectate" type="button" class="button-small button-secondary">Watch</button>
+                                        </div>
+                                        <ul id="spectatorRoster" class="roster" aria-label="Spectators"></ul>
+                                    </section>
+                                </div>
+                                <div class="ready-controls">
+                                    <p id="readySummary" role="status">Choose a team, then ready up for kickoff.</p>
+                                    <button id="readyButton" type="button" class="button-primary" aria-pressed="false">Ready up</button>
+                                </div>
                             </section>
 
-                            <section class="chat-section" aria-labelledby="chatTitle"><h3 id="chatTitle">Room chat</h3><div id="chatLog" class="chat-log" role="log" aria-live="polite" aria-relevant="additions" aria-label="Room messages"></div><form id="chatForm" class="chat-form"><label class="sr-only" for="chatInput">Message your room</label><input id="chatInput" name="chatInput" type="text" maxlength="180" autocomplete="off" placeholder="Message your room…"><button id="sendChat" type="submit" class="button-small button-secondary" aria-label="Send message">Send</button></form></section>
+                            <section id="queuePanel" class="queue-panel" aria-labelledby="queueTitle">
+                                <div class="section-heading">
+                                    <h3 id="queueTitle">Next kickoff</h3>
+                                    <span class="section-note">QUEUE</span>
+                                </div>
+                                <p class="section-description">Join the queue for a place in the next game.</p>
+                                <ol id="queueRoster" class="roster queue-roster" aria-label="Players waiting for the next kickoff"></ol>
+                                <button id="joinQueue" type="button" class="button-secondary">Join next round <span aria-hidden="true">→</span></button>
+                            </section>
+                        </section>
+
+                        <section class="panel activity-panel" aria-labelledby="activityTitle">
+                            <div class="panel-heading">
+                                <p class="eyebrow">AROUND THE PITCH</p>
+                                <h2 id="activityTitle">Match notices</h2>
+                            </div>
+                            <div id="activityLog" class="activity-log" role="log" aria-live="polite" aria-relevant="additions" aria-label="Match notices"></div>
                         </section>
                     </aside>
                 </div>

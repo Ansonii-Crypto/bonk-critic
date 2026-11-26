@@ -1,4 +1,5 @@
 import Box2D from './vendor/box2d.js';
+import {DEFAULT_MATCH_SETTINGS, validateMatchSettings} from './settings.js';
 
 // Mechanics and geometry checked against the supplied Bonk football client:
 // bonkannotated.js:11925, 12341, 12530, 12583, 12722. World units are metres.
@@ -43,9 +44,12 @@ const Circle = Box2D.Collision.Shapes.b2CircleShape;
 const Polygon = Box2D.Collision.Shapes.b2PolygonShape;
 
 export function createState(players = [], options = {}) {
+    const {settings, error} = validateMatchSettings(options.settings === undefined ? {} : options.settings);
+    if (error) throw new RangeError(error);
+    const customized = Object.keys(DEFAULT_MATCH_SETTINGS).some(key => settings[key] !== DEFAULT_MATCH_SETTINGS[key]);
     const state = {
         scores: [0, 0, 0, 0],
-        goalHeight: C.GOAL_HEIGHT,
+        goalHeight: settings.goalHeight,
         borderThickness: C.BORDER_THICKNESS,
         borderThicknessXInner: C.INNER_BORDER_X,
         borderThicknessYInner: C.INNER_BORDER_Y,
@@ -54,24 +58,27 @@ export function createState(players = [], options = {}) {
         ftu: options.kickoffTicks ?? C.KICKOFF_TICKS,
         lscr: -1,
         ni: true,
-        ball: {x: C.WIDTH / 2 / C.PPM, y: C.HEIGHT / 2 / C.PPM, xv: 0, yv: 0},
+        ball: {x: settings.pitchWidth / 2 / C.PPM, y: settings.pitchHeight / 2 / C.PPM, xv: 0, yv: 0},
         players: players.map(player => player ? {...player} : null),
         seed: options.seed ?? 1,
         discs: [],
         sts: [],
     };
+    // Keeping the native default shape also makes historical checkpoints and
+    // fixtures valid. Customized states carry every setting for replay/reset.
+    if (customized) state.settings = settings;
     const perTeam = [0, 0, 0, 0];
     state.players.forEach((player, slot) => {
         if (!player || (player.team !== 2 && player.team !== 3)) return;
         const team = player.team;
         const index = perTeam[team]++;
-        let rowOffset = Math.ceil(index / 2) * 80;
+        let rowOffset = Math.ceil(index / 2) * 80 * (settings.pitchHeight / C.HEIGHT);
         if ((team === 2 && index % 2 === 0) || (team === 3 && index % 2 === 1)) {
             rowOffset = -rowOffset;
         }
         state.discs[slot] = {
-            x: (C.WIDTH / 2 + (team === 3 ? -250 : 250)) / C.PPM,
-            y: (C.HEIGHT / 2 + rowOffset) / C.PPM,
+            x: (settings.pitchWidth / 2 + (team === 3 ? -250 : 250) * (settings.pitchWidth / C.WIDTH)) / C.PPM,
+            y: (settings.pitchHeight / 2 + rowOffset) / C.PPM,
             xv: 0,
             yv: 0,
             team,
@@ -79,6 +86,48 @@ export function createState(players = [], options = {}) {
         };
     });
     return state;
+}
+
+export function getPitchGeometry(state = {}) {
+    const settings = {...DEFAULT_MATCH_SETTINGS, ...state.settings};
+    const ppm = state.ppm ?? C.PPM;
+    const goalHeight = state.goalHeight ?? settings.goalHeight;
+    const goalEnabled = goalHeight !== -1;
+    const width = settings.pitchWidth;
+    const height = settings.pitchHeight;
+    const left = (state.borderThickness ?? C.BORDER_THICKNESS) + (state.borderThicknessXInner ?? C.INNER_BORDER_X);
+    const top = (state.borderThickness ?? C.BORDER_THICKNESS) + (state.borderThicknessYInner ?? C.INNER_BORDER_Y);
+    const centerX = width / 2;
+    const centerY = height / 2;
+    const halfGoal = goalEnabled ? goalHeight * ppm / 2 : 0;
+    const pixels = {
+        width,
+        height,
+        centerX,
+        centerY,
+        left,
+        right: width - left,
+        top,
+        bottom: height - top,
+        goalTop: centerY - halfGoal,
+        goalBottom: centerY + halfGoal,
+        wallThickness: 5,
+        postRadius: 8,
+        ballRadius: settings.ballRadius * ppm,
+        playerRadius: settings.playerRadius * ppm,
+        posts: [],
+    };
+    if (goalEnabled) {
+        pixels.posts = [
+            {x: pixels.left, y: pixels.goalTop, radius: pixels.postRadius},
+            {x: pixels.right, y: pixels.goalTop, radius: pixels.postRadius},
+            {x: pixels.left, y: pixels.goalBottom, radius: pixels.postRadius},
+            {x: pixels.right, y: pixels.goalBottom, radius: pixels.postRadius},
+        ];
+    }
+    const world = Object.fromEntries(Object.entries(pixels).filter(([key]) => key !== 'posts').map(([key, value]) => [key, value / ppm]));
+    world.posts = pixels.posts.map(post => ({x: post.x / ppm, y: post.y / ppm, radius: post.radius / ppm}));
+    return {ppm, goalEnabled, pixels, world};
 }
 
 function outputBody(body) {
@@ -108,14 +157,16 @@ function createCircle(world, source, {radius, mass, damping, category, type}) {
 }
 
 function createPitch(world, state) {
+    const settings = state.settings || DEFAULT_MATCH_SETTINGS;
     const ppm = state.ppm;
-    const halfWidth = (C.WIDTH - 2 * (state.borderThickness + state.borderThicknessXInner)) / ppm / 2;
-    const halfHeight = (C.HEIGHT - 2 * (state.borderThickness + state.borderThicknessYInner)) / ppm / 2;
+    const halfWidth = (settings.pitchWidth - 2 * (state.borderThickness + state.borderThicknessXInner)) / ppm / 2;
+    const halfHeight = (settings.pitchHeight - 2 * (state.borderThickness + state.borderThicknessYInner)) / ppm / 2;
+    const goalEnabled = state.goalHeight !== -1;
     const halfGoal = state.goalHeight / 2;
     const wall = 5 / ppm;
     const definition = new BodyDef();
     definition.type = Body.b2_staticBody;
-    definition.position.Set(C.WIDTH / 2 / ppm, C.HEIGHT / 2 / ppm);
+    definition.position.Set(settings.pitchWidth / 2 / ppm, settings.pitchHeight / 2 / ppm);
     const body = world.CreateBody(definition);
     body.SetUserData({type: 'wall'});
 
@@ -123,16 +174,25 @@ function createPitch(world, state) {
     fixture.friction = 0;
     fixture.restitution = C.WALL_RESTITUTION;
     fixture.filter.maskBits = 4;
-    // Match the native vertex order and fixture creation order. Players pass
-    // through these six wall polygons, but collide with the four round posts.
+    // Match native vertex/fixture order whenever goals are enabled. Players
+    // pass through the wall polygons, but collide with the round posts.
     const polygons = [
         [[halfWidth + wall, -halfHeight], [-halfWidth - wall, -halfHeight], [-halfWidth - wall, -halfHeight - wall], [halfWidth + wall, -halfHeight - wall]],
         [[halfWidth + wall, halfHeight + wall], [-halfWidth - wall, halfHeight + wall], [-halfWidth - wall, halfHeight], [halfWidth + wall, halfHeight]],
-        [[-halfWidth, -halfGoal], [-halfWidth - wall, -halfGoal], [-halfWidth - wall, -halfHeight], [-halfWidth, -halfHeight]],
-        [[halfWidth, -halfHeight], [halfWidth + wall, -halfHeight], [halfWidth + wall, -halfGoal], [halfWidth, -halfGoal]],
-        [[-halfWidth, halfHeight], [-halfWidth - wall, halfHeight], [-halfWidth - wall, halfGoal], [-halfWidth, halfGoal]],
-        [[halfWidth, halfGoal], [halfWidth + wall, halfGoal], [halfWidth + wall, halfHeight], [halfWidth, halfHeight]],
     ];
+    if (goalEnabled) {
+        polygons.push(
+            [[-halfWidth, -halfGoal], [-halfWidth - wall, -halfGoal], [-halfWidth - wall, -halfHeight], [-halfWidth, -halfHeight]],
+            [[halfWidth, -halfHeight], [halfWidth + wall, -halfHeight], [halfWidth + wall, -halfGoal], [halfWidth, -halfGoal]],
+            [[-halfWidth, halfHeight], [-halfWidth - wall, halfHeight], [-halfWidth - wall, halfGoal], [-halfWidth, halfGoal]],
+            [[halfWidth, halfGoal], [halfWidth + wall, halfGoal], [halfWidth + wall, halfHeight], [halfWidth, halfHeight]],
+        );
+    } else {
+        polygons.push(
+            [[-halfWidth, halfHeight], [-halfWidth - wall, halfHeight], [-halfWidth - wall, -halfHeight], [-halfWidth, -halfHeight]],
+            [[halfWidth, -halfHeight], [halfWidth + wall, -halfHeight], [halfWidth + wall, halfHeight], [halfWidth, halfHeight]],
+        );
+    }
     for (const vertices of polygons) {
         fixture.shape = new Polygon();
         fixture.shape.SetAsArray(vertices.map(([x, y]) => new Vec2(x, y)));
@@ -140,7 +200,8 @@ function createPitch(world, state) {
     }
     fixture.restitution = C.POST_RESTITUTION;
     fixture.filter.maskBits = 6;
-    for (const [x, y] of [[-halfWidth, -halfGoal], [halfWidth, -halfGoal], [-halfWidth, halfGoal], [halfWidth, halfGoal]]) {
+    const posts = goalEnabled ? [[-halfWidth, -halfGoal], [halfWidth, -halfGoal], [-halfWidth, halfGoal], [halfWidth, halfGoal]] : [];
+    for (const [x, y] of posts) {
         fixture.shape = new Circle(8 / ppm);
         fixture.shape.SetLocalPosition(new Vec2(x, y));
         body.CreateFixture(fixture);
@@ -148,17 +209,17 @@ function createPitch(world, state) {
     return body;
 }
 
-function applyInputs(body, input) {
+function applyInputs(body, input, settings) {
     const force = new Vec2(
-        input.left ? -C.MOVE_FORCE : input.right ? C.MOVE_FORCE : 0,
-        input.up ? -C.MOVE_FORCE : input.down ? C.MOVE_FORCE : 0,
+        input.left ? -settings.moveForce : input.right ? settings.moveForce : 0,
+        input.up ? -settings.moveForce : input.down ? settings.moveForce : 0,
     );
     if (input.action) force.Multiply(C.ACTION_MOVE_MULTIPLIER);
     if (input.action2) force.Set(0, 0);
     body.ApplyForce(force, body.GetWorldCenter());
 }
 
-function kick(body, disc, input, ball, sounds) {
+function kick(body, disc, input, ball, sounds, settings) {
     let kickReady = disc.kickReady;
     if (input.action && kickReady) {
         const position = body.GetPosition();
@@ -166,12 +227,12 @@ function kick(body, disc, input, ball, sounds) {
         const dx = ballPosition.x - position.x;
         const dy = ballPosition.y - position.y;
         const distance = Math.sqrt(dx * dx + dy * dy);
-        if (distance < C.KICK_REACH) {
+        if (distance < settings.playerRadius + settings.ballRadius + 0.6) {
             // Coincident centres are not a useful aim direction. Choosing the
             // team's attack direction keeps an overlapping spawn finite.
-            const impulse = distance > 0
-                ? new Vec2(dx / (distance / C.KICK_IMPULSE), dy / (distance / C.KICK_IMPULSE))
-                : new Vec2(disc.team === 2 ? -C.KICK_IMPULSE : C.KICK_IMPULSE, 0);
+            const impulse = settings.kickImpulse === 0 ? new Vec2(0, 0) : distance > 0
+                ? new Vec2(dx / (distance / settings.kickImpulse), dy / (distance / settings.kickImpulse))
+                : new Vec2(disc.team === 2 ? -settings.kickImpulse : settings.kickImpulse, 0);
             ball.ApplyImpulse(impulse, ballPosition);
             kickReady = false;
             sounds.push({i: 'footKick', v: 1, f: 10});
@@ -181,23 +242,24 @@ function kick(body, disc, input, ball, sounds) {
     return kickReady;
 }
 
-function clampPlayer(body, ppm) {
+function clampPlayer(body, ppm, settings) {
     const position = body.GetPosition();
     const velocity = body.GetLinearVelocity();
-    if (position.x < C.PLAYER_RADIUS) {
-        position.x = C.PLAYER_RADIUS;
+    const radius = settings.playerRadius;
+    if (position.x < radius) {
+        position.x = radius;
         velocity.x = 0;
     }
-    if (position.x > C.WIDTH / ppm - C.PLAYER_RADIUS) {
-        position.x = C.WIDTH / ppm - C.PLAYER_RADIUS;
+    if (position.x > settings.pitchWidth / ppm - radius) {
+        position.x = settings.pitchWidth / ppm - radius;
         velocity.x = 0;
     }
-    if (position.y < C.PLAYER_RADIUS) {
-        position.y = C.PLAYER_RADIUS;
+    if (position.y < radius) {
+        position.y = radius;
         velocity.y = 0;
     }
-    if (position.y > C.HEIGHT / ppm - C.PLAYER_RADIUS) {
-        position.y = C.HEIGHT / ppm - C.PLAYER_RADIUS;
+    if (position.y > settings.pitchHeight / ppm - radius) {
+        position.y = settings.pitchHeight / ppm - radius;
         velocity.y = 0;
     }
 }
@@ -227,6 +289,7 @@ export class FootballPhysics {
     }
 
     step(state, inputsBySlot = [], playerChanges = null) {
+        const settings = state.settings || DEFAULT_MATCH_SETTINGS;
         const world = this.world;
         world.novakReset();
         world.SetContactListener(this.contactListener);
@@ -234,7 +297,7 @@ export class FootballPhysics {
         const left = new Set(playerChanges?.playersLeft || []);
         const pitch = createPitch(world, state);
         const ball = createCircle(world, state.ball, {
-            radius: C.BALL_RADIUS, mass: C.BALL_MASS, damping: C.BALL_LINEAR_DAMPING, category: 4, type: 'ball',
+            radius: settings.ballRadius, mass: C.BALL_MASS, damping: C.BALL_LINEAR_DAMPING, category: 4, type: 'ball',
         });
         const bodies = [];
         const ready = [];
@@ -242,7 +305,7 @@ export class FootballPhysics {
             state.discs.forEach((disc, slot) => {
                 if (!disc || left.has(slot)) return;
                 bodies[slot] = createCircle(world, disc, {
-                    radius: C.PLAYER_RADIUS, mass: C.PLAYER_MASS, damping: C.PLAYER_LINEAR_DAMPING, category: 2, type: 'disc',
+                    radius: settings.playerRadius, mass: C.PLAYER_MASS, damping: C.PLAYER_LINEAR_DAMPING, category: 2, type: 'disc',
                 });
                 ready[slot] = disc.kickReady;
             });
@@ -250,21 +313,21 @@ export class FootballPhysics {
                 bodies.forEach((body, slot) => {
                     const input = inputsBySlot[slot];
                     if (!input) return;
-                    applyInputs(body, input);
-                    ready[slot] = kick(body, state.discs[slot], input, ball, this.sounds);
+                    applyInputs(body, input, settings);
+                    ready[slot] = kick(body, state.discs[slot], input, ball, this.sounds, settings);
                 });
                 world.Step(C.DT, C.VELOCITY_ITERATIONS, C.POSITION_ITERATIONS);
             }
             world.ClearForces();
-            bodies.forEach(body => clampPlayer(body, state.ppm));
+            bodies.forEach(body => clampPlayer(body, state.ppm, settings));
 
             const scores = state.scores.slice();
             let lastScorer = state.lscr;
             let goalScored = false;
-            if (state.ftu === -1 && state.fte === -1) {
+            if (state.ftu === -1 && state.fte === -1 && state.goalHeight !== -1) {
                 const x = ball.GetPosition().x;
                 const leftGoal = (state.borderThickness + state.borderThicknessXInner) / state.ppm;
-                const rightGoal = (C.WIDTH - state.borderThickness - state.borderThicknessXInner) / state.ppm;
+                const rightGoal = (settings.pitchWidth - state.borderThickness - state.borderThicknessXInner) / state.ppm;
                 if (x < leftGoal) {
                     scores[2]++;
                     lastScorer = 2;
@@ -295,8 +358,9 @@ export class FootballPhysics {
                 ball: outputBody(ball),
                 discs: bodies.map((body, slot) => ({...outputBody(body), team: state.discs[slot].team, kickReady: ready[slot]})),
             };
+            if (state.settings) next.settings = {...settings};
             if (state.fte === 0) {
-                const kickoff = createState(next.players, {seed: state.seed});
+                const kickoff = createState(next.players, {seed: state.seed, settings});
                 kickoff.scores = scores;
                 return kickoff;
             }

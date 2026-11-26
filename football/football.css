@@ -9,19 +9,10 @@
     --pitch: #5a7f64;
     --blue: #497bac;
     --red: #b75954;
+    --pitch-ratio: 730 / 500;
     font-family: 'Trebuchet MS', Verdana, system-ui, sans-serif;
     color: var(--text);
     background: #dbe6d6;
-}
-
-.roster-identity {
-    flex: 0 0 auto;
-    padding: 2px 5px;
-    border: 1px solid #b8b5a6;
-    border-radius: 4px;
-    color: var(--muted);
-    font-size: 9px;
-    font-weight: 700;
 }
 
 * {
@@ -48,7 +39,7 @@ body {
     user-select: none;
 }
 
-button, input, select {
+button, input, select, textarea {
     font: inherit;
 }
 
@@ -61,8 +52,8 @@ button {
     align-items: center;
     justify-content: center;
     gap: 10px;
-    min-height: 42px;
-    padding: 10px 15px;
+    min-height: 40px;
+    padding: 10px 13px;
     border: 2px solid var(--ink);
     border-radius: 5px;
     background: var(--green);
@@ -95,15 +86,11 @@ button:focus-visible, a:focus-visible, summary:focus-visible, canvas:focus-visib
     outline-offset: 5px;
 }
 
-html[data-focus-input="pointer"] :focus {
-    outline: none;
-}
-
-input, select {
+input, select, textarea {
     min-width: 0;
     width: 100%;
-    min-height: 44px;
-    padding: 10px 11px;
+    min-height: 42px;
+    padding: 10px;
     border: 2px solid #959887;
     border-radius: 5px;
     background: #fffdf5;
@@ -113,18 +100,22 @@ input, select {
     user-select: text;
 }
 
-input::placeholder {
+input::placeholder, textarea::placeholder {
     color: #8a8c7f;
     opacity: 1;
 }
 
-input:focus, select:focus {
+input:focus, select:focus, textarea:focus {
     outline: 3px solid #65954b40;
     outline-offset: 2px;
     border-color: #4f763c;
 }
 
-input:disabled, select:disabled {
+html[data-focus-input="pointer"] :focus {
+    outline: none;
+}
+
+input:disabled, select:disabled, textarea:disabled {
     opacity: .6;
 }
 
@@ -141,7 +132,7 @@ h1, h2, h3, p {
     margin: 0;
 }
 
-button span[aria-hidden] {
+button > span[aria-hidden] {
     margin-left: auto;
 }
 
@@ -179,16 +170,16 @@ button span[aria-hidden] {
 }
 
 .button-small {
-    min-height: 33px;
-    padding: 6px 10px;
+    min-height: 32px;
+    padding: 6px 9px;
     font-size: 11px;
 }
 
 .eyebrow {
     color: #577049;
-    font-size: 10px;
+    font-size: 9px;
     font-weight: 900;
-    letter-spacing: .15em;
+    letter-spacing: .14em;
     line-height: 1.5;
 }
 
@@ -198,8 +189,8 @@ button span[aria-hidden] {
 }
 
 .site-header {
-    min-height: 68px;
-    padding: 16px max(22px, calc((100% - 1056px) / 2));
+    min-height: 65px;
+    padding: 15px max(24px, calc((100% - 1712px) / 2));
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -264,7 +255,7 @@ button span[aria-hidden] {
 }
 
 .connection-status.is-connected::before, .connection-status[data-state="connected"]::before {
-    background: #65954b;
+    background: var(--green);
 }
 
 .connection-status.is-error::before, .connection-status[data-state="error"]::before {
@@ -272,9 +263,9 @@ button span[aria-hidden] {
 }
 
 .football-main {
-    width: min(1100px, 100%);
+    width: min(1760px, 100%);
     margin: 0 auto;
-    padding: 30px 22px 20px;
+    padding: 27px 24px 32px;
 }
 
 .page-heading {
@@ -288,13 +279,13 @@ button span[aria-hidden] {
 .page-heading h1 {
     margin-top: 5px;
     color: var(--ink);
-    font-size: clamp(27px, 3.4vw, 38px);
+    font-size: clamp(25px, 2.7vw, 36px);
     letter-spacing: -.055em;
     line-height: 1.12;
 }
 
 .heading-note {
-    max-width: 205px;
+    max-width: 250px;
     padding-bottom: 3px;
     color: #6b7567;
     font-size: 12px;
@@ -304,19 +295,19 @@ button span[aria-hidden] {
 
 .game-layout {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 300px;
+    grid-template-columns: 240px minmax(0, 1fr) 260px;
     align-items: start;
-    gap: 20px;
+    gap: 18px;
 }
 
-.arena-column {
+.arena-column, .chat-sidebar, .room-sidebar {
     min-width: 0;
 }
 
 .arena-frame {
-    display: grid;
-    place-items: center;
+    position: relative;
     width: 100%;
+    aspect-ratio: var(--pitch-ratio, 730 / 500);
     overflow: hidden;
     background: var(--pitch);
     border: 3px solid var(--ink);
@@ -326,10 +317,9 @@ button span[aria-hidden] {
 
 #footballCanvas {
     display: block;
+    min-width: 0;
     width: 100%;
-    max-width: 730px;
-    height: auto;
-    aspect-ratio: 730 / 500;
+    height: 100%;
     background: var(--pitch);
     touch-action: none;
 }
@@ -339,8 +329,8 @@ button span[aria-hidden] {
     justify-content: space-between;
     align-items: center;
     gap: 12px;
-    min-height: 62px;
-    padding: 12px 1px 6px;
+    min-height: 61px;
+    padding: 13px 1px 6px;
 }
 
 #matchStatus {
@@ -357,13 +347,436 @@ button span[aria-hidden] {
 }
 
 .pitch-actions button {
-    font-size: 10px;
     min-height: 29px;
     padding: 5px 8px;
-    background: #f0eddc;
     border-color: #5b6052;
+    background: #f0eddc;
     box-shadow: 0 2px 0 #5b6052;
+    font-size: 10px;
     white-space: nowrap;
+}
+
+.panel {
+    background: var(--paper);
+    border: 2px solid var(--ink);
+    border-radius: 7px;
+    box-shadow: 0 5px 0 var(--ink), 0 9px 12px #42433f0b;
+}
+
+.panel-heading {
+    padding-bottom: 13px;
+    border-bottom: 1px solid #dcd6c3;
+}
+
+.panel-heading h2, .room-heading h2 {
+    margin-top: 4px;
+    font-size: 20px;
+    letter-spacing: -.045em;
+    overflow-wrap: anywhere;
+}
+
+.chat-panel {
+    display: flex;
+    flex-direction: column;
+    padding: 18px 14px 14px;
+}
+
+.chat-log {
+    height: clamp(280px, 53vh, 650px);
+    margin: 13px 0;
+    padding: 10px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border: 1px solid #d8d4c2;
+    border-radius: 4px;
+    background: #f4f0e1;
+    font-size: 11px;
+    line-height: 1.65;
+    scrollbar-width: thin;
+    overflow-wrap: anywhere;
+}
+
+.chat-log:empty::before {
+    content: 'Join football to chat with the room.';
+    color: #929482;
+}
+
+.chat-log p, .chat-message {
+    margin-bottom: 9px;
+}
+
+.chat-log strong, .chat-author {
+    color: #4d5e43;
+}
+
+.chat-system, .system-message {
+    color: #8a8d77;
+    font-style: italic;
+}
+
+.chat-form {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.chat-form input {
+    min-height: 35px;
+    padding: 7px;
+    font-size: 10px;
+}
+
+.chat-form button {
+    flex-shrink: 0;
+    min-height: 32px;
+    padding: 6px 7px;
+    font-size: 10px;
+}
+
+.room-sidebar {
+    display: grid;
+    gap: 18px;
+}
+
+.entry-panel {
+    padding: 21px 17px 18px;
+}
+
+.panel-intro h2 {
+    margin-top: 6px;
+    font-size: 23px;
+    line-height: 1.13;
+    letter-spacing: -.045em;
+}
+
+.panel-intro > p:last-child {
+    margin-top: 10px;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.65;
+}
+
+.room-form {
+    display: grid;
+    gap: 14px;
+    margin-top: 20px;
+}
+
+.field label {
+    display: block;
+    margin-bottom: 6px;
+    color: #5d6456;
+    font-size: 11px;
+    font-weight: 800;
+}
+
+.field input {
+    font-size: 12px;
+}
+
+.room-form > button {
+    justify-content: space-between;
+    width: 100%;
+    font-size: 12px;
+}
+
+.entry-status {
+    margin-top: 15px;
+    color: #a4473d;
+    font-size: 11px;
+    line-height: 1.5;
+}
+
+.entry-status:empty {
+    display: none;
+}
+
+.room-panel {
+    padding: 17px 14px 15px;
+}
+
+.room-actions {
+    display: flex;
+    gap: 7px;
+    margin-top: 12px;
+    padding-bottom: 18px;
+}
+
+#copyRoomLink {
+    flex: 1;
+}
+
+#shareLink {
+    margin-bottom: 13px;
+    font-family: Consolas, monospace;
+    font-size: 10px;
+    -webkit-user-select: all;
+    user-select: all;
+}
+
+.section-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.section-heading h3 {
+    font-size: 12px;
+    letter-spacing: -.02em;
+}
+
+.section-note {
+    padding: 3px 5px;
+    border-radius: 3px;
+    background: #eae5d0;
+    color: #81836c;
+    font-size: 8px;
+    font-weight: 900;
+    letter-spacing: .06em;
+}
+
+.lobby-panel {
+    padding-top: 15px;
+    border-top: 1px solid #d9d5c2;
+}
+
+.team-section {
+    padding: 13px 0;
+    border-bottom: 1px solid #ded9c8;
+}
+
+.team-heading {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    align-items: center;
+}
+
+.team-heading h3 {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+}
+
+.team-dot {
+    width: 10px;
+    height: 10px;
+    border: 2px solid #365d87;
+    border-radius: 50%;
+    background: #9ac7ee;
+}
+
+.red-team .team-dot {
+    border-color: #924744;
+    background: #e9a39b;
+}
+
+.button-team {
+    background: #d9e8ed;
+    color: #365d7f;
+    border-color: #596a6a;
+    box-shadow: 0 2px 0 #596a6a;
+}
+
+.red-team .button-team {
+    background: #f1ddd4;
+    color: #914f47;
+    border-color: #7f655a;
+    box-shadow: 0 2px 0 #7f655a;
+}
+
+.team-heading button {
+    min-height: 27px;
+    padding: 4px 7px;
+    font-size: 10px;
+}
+
+.roster {
+    list-style: none;
+    display: grid;
+    gap: 6px;
+    margin: 9px 0 0;
+    padding: 0;
+}
+
+.roster:empty::after {
+    content: 'No players yet';
+    color: #939481;
+    font-size: 10px;
+    padding: 2px 0;
+}
+
+.spectator-team .roster:empty::after {
+    content: 'Nobody watching yet';
+}
+
+.roster li {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 5px;
+    min-height: 26px;
+    padding: 5px 6px;
+    border-radius: 3px;
+    background: #f0eddf;
+    font-size: 11px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+
+.roster-name {
+    min-width: 0;
+    flex: 1 1 70px;
+    overflow-wrap: anywhere;
+}
+
+.roster-actions {
+    display: flex;
+    gap: 3px;
+    flex-shrink: 0;
+}
+
+.roster button {
+    min-height: 22px;
+    padding: 2px 5px;
+    border-width: 1px;
+    border-radius: 3px;
+    background: #e5ddc7;
+    color: var(--ink);
+    box-shadow: 0 1px 0 var(--ink);
+    font-size: 9px;
+}
+
+.team-assignment {
+    flex: 0 0 auto;
+    width: 77px;
+    min-height: 25px;
+    padding: 3px 4px;
+    border-width: 1px;
+    background: #fff9e9;
+    font-size: 9px;
+}
+
+.roster-identity, .host-badge, .you-badge, .ready-indicator, .queue-preference {
+    flex: 0 0 auto;
+    padding: 1px 4px;
+    border: 1px solid #c5c1ae;
+    border-radius: 3px;
+    color: #7a806a;
+    font-size: 8px;
+    font-weight: 800;
+}
+
+.ready-indicator[data-ready="true"] {
+    color: #54733e;
+    border-color: #afbd9a;
+    background: #e4ecd8;
+}
+
+.ready-indicator[data-ready="false"] {
+    color: #96917b;
+}
+
+.queue-preference {
+    color: #6b7960;
+    background: #e7e8d7;
+}
+
+.ready-controls {
+    display: grid;
+    gap: 11px;
+    padding: 15px 0 17px;
+}
+
+#readySummary, .section-description {
+    color: #7b816d;
+    font-size: 10px;
+    line-height: 1.6;
+}
+
+#readyButton, #joinQueue {
+    justify-content: space-between;
+    width: 100%;
+    min-height: 34px;
+    padding: 8px 10px;
+    font-size: 11px;
+}
+
+#readyButton[aria-pressed="true"] {
+    background: #e0e8d1;
+    color: #526a3f;
+}
+
+.queue-panel {
+    padding-top: 16px;
+    border-top: 1px solid #d9d5c2;
+}
+
+.section-description {
+    margin-top: 7px;
+}
+
+.queue-roster {
+    margin-top: 10px;
+    margin-bottom: 13px;
+    counter-reset: queue;
+}
+
+.queue-roster, .spectator-team .roster {
+    max-height: 240px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
+
+.queue-roster:empty::after {
+    content: 'The queue is open.';
+}
+
+.queue-roster li:not(.roster-empty) {
+    counter-increment: queue;
+}
+
+.queue-roster li:not(.roster-empty)::before {
+    content: counter(queue, decimal-leading-zero);
+    margin-right: 3px;
+    color: #92947c;
+    font-size: 9px;
+}
+
+.activity-panel {
+    padding: 17px 14px 13px;
+}
+
+.activity-log {
+    max-height: 230px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-top: 11px;
+    color: #69745d;
+    font-size: 10px;
+    line-height: 1.7;
+    scrollbar-width: thin;
+    overflow-wrap: anywhere;
+}
+
+.activity-log:empty::before {
+    content: 'Kickoffs and results appear here.';
+    color: #929482;
+}
+
+.activity-log p, .activity-message, .activity-item {
+    padding: 0 0 9px;
+    margin-bottom: 9px;
+    border-bottom: 1px dashed #d9d5c1;
+}
+
+.activity-log p:last-child, .activity-message:last-child, .activity-item:last-child {
+    padding-bottom: 0;
+    margin-bottom: 0;
+    border-bottom: 0;
 }
 
 .controls-help {
@@ -373,7 +786,7 @@ button span[aria-hidden] {
     border-radius: 5px;
 }
 
-.controls-help summary {
+.controls-help summary, .admin-panel > summary {
     display: flex;
     align-items: center;
     gap: 12px;
@@ -385,22 +798,22 @@ button span[aria-hidden] {
     list-style: none;
 }
 
-.controls-help summary::before {
+.controls-help summary::before, .admin-panel > summary::before {
     content: '+';
     font-size: 16px;
     line-height: .7;
     font-weight: 400;
 }
 
-.controls-help[open] summary::before {
+.controls-help[open] summary::before, .admin-panel[open] > summary::before {
     content: '−';
 }
 
-.controls-help summary::-webkit-details-marker {
+.controls-help summary::-webkit-details-marker, .admin-panel > summary::-webkit-details-marker {
     display: none;
 }
 
-.help-preview {
+.help-preview, .admin-preview {
     margin-left: auto;
     color: #818b77;
     font-size: 10px;
@@ -452,395 +865,120 @@ kbd {
     line-height: 1.6;
 }
 
-.room-sidebar {
+.admin-panel {
+    margin-top: 17px;
+    box-shadow: 0 3px 0 var(--ink);
+}
+
+.admin-panel > summary {
+    padding: 15px;
+}
+
+.admin-controls {
+    padding: 2px 15px 17px;
+}
+
+.settings-fields {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 13px 16px;
+}
+
+.settings-fields > .field, .setting-field, .setting-row {
+    display: grid;
+    align-content: start;
+    gap: 6px;
     min-width: 0;
 }
 
-.panel {
-    background: var(--paper);
-    border: 2px solid var(--ink);
-    border-radius: 7px;
-    box-shadow: 0 5px 0 var(--ink), 0 9px 12px #42433f0b;
-}
-
-.entry-panel {
-    padding: 22px 20px 16px;
-}
-
-.panel-intro h2 {
-    margin-top: 6px;
-    font-size: 23px;
-    line-height: 1.13;
-    letter-spacing: -.045em;
-}
-
-.panel-intro > p:last-child {
-    margin-top: 10px;
-    color: var(--muted);
-    font-size: 12px;
-    line-height: 1.6;
-}
-
-.field label {
+.settings-fields label, .setting-label {
     display: block;
-    margin-bottom: 6px;
-    color: #5d6456;
+    color: #5d6852;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.5;
+}
+
+.settings-fields input, .settings-fields select {
+    min-height: 34px;
+    padding: 7px 8px;
+    font-size: 12px;
+}
+
+.settings-fields input[type="checkbox"] {
+    width: 18px;
+    min-height: 18px;
+    margin: 4px 0;
+    accent-color: var(--green);
+}
+
+.settings-fields small, .setting-hint {
+    color: #838973;
+    font-size: 10px;
+    line-height: 1.5;
+}
+
+.settings-fields fieldset {
+    display: grid;
+    gap: 10px;
+    min-width: 0;
+    margin: 0;
+    padding: 11px;
+    border: 1px solid #d6d2bd;
+    border-radius: 4px;
+}
+
+.settings-fields legend {
+    padding: 0 5px;
+    color: #627251;
     font-size: 11px;
     font-weight: 800;
 }
 
-.field input {
-    font-size: 12px;
-}
-
-.name-field {
-    margin-top: 22px;
-    margin-bottom: 17px;
-}
-
-.room-form {
-    display: grid;
-    gap: 12px;
-}
-
-.room-form > button {
-    justify-content: space-between;
-    width: 100%;
-    font-size: 12px;
-}
-
-.form-divider {
+.settings-actions {
     display: flex;
     align-items: center;
-    gap: 9px;
-    margin: 23px 0 20px;
-    color: #8a8b7c;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 18px;
+    padding-top: 14px;
+    border-top: 1px solid #dcd6c3;
+}
+
+.settings-actions p {
+    color: #838973;
     font-size: 10px;
-}
-
-.form-divider::before, .form-divider::after {
-    content: '';
-    flex: 1;
-    height: 1px;
-    background: #dbd7c5;
-}
-
-.code-input {
-    font-family: Consolas, 'Courier New', monospace;
-    letter-spacing: .025em;
-}
-
-.entry-status {
-    margin-top: 16px;
-    color: #a4473d;
-    font-size: 11px;
     line-height: 1.5;
 }
 
-.entry-status:empty {
+.settings-status {
+    margin-top: 12px;
+    color: #627251;
+    font-size: 11px;
+    line-height: 1.6;
+}
+
+.settings-status:empty {
     display: none;
 }
 
-.entry-note {
-    margin-top: 18px;
-    color: #8c8d7d;
-    font-size: 9px;
-    text-align: center;
-    line-height: 1.5;
-}
-
-.room-panel {
-    padding: 17px 15px 15px;
-}
-
-.room-heading h2 {
-    margin-top: 4px;
-    font-size: 21px;
-    letter-spacing: -.04em;
-    overflow-wrap: anywhere;
-}
-
-.room-code-row {
+.admin-match-actions {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
+    flex-wrap: wrap;
     gap: 10px;
-    margin-top: 10px;
-    padding: 8px 9px;
-    background: #eee8d6;
-    border: 1px solid #d9d3bf;
-    border-radius: 4px;
+    margin-top: 14px;
 }
 
-.room-code-label {
-    font-size: 8px;
-    color: #7d816f;
-    letter-spacing: .1em;
-    font-weight: 900;
+.admin-match-actions:has(> :not([hidden])) {
+    padding-top: 14px;
+    border-top: 1px solid #dcd6c3;
 }
 
-#roomCodeDisplay {
-    font-family: Consolas, 'Courier New', monospace;
-    font-size: 14px;
-    letter-spacing: .13em;
-}
-
-.room-actions {
-    display: flex;
-    gap: 8px;
-    margin-top: 9px;
-    padding-bottom: 17px;
-}
-
-#copyRoomLink {
-    flex: 1;
-}
-
-.team-lists {
-    border-top: 1px solid #d9d5c2;
-}
-
-.team-section {
-    padding: 13px 0;
-    border-bottom: 1px solid #ded9c8;
-}
-
-.team-heading {
-    display: flex;
-    justify-content: space-between;
-    gap: 10px;
-    align-items: center;
-}
-
-.team-heading h3 {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 12px;
-}
-
-.team-dot {
-    width: 10px;
-    height: 10px;
-    border: 2px solid #365d87;
-    border-radius: 50%;
-    background: #9ac7ee;
-}
-
-.red-team .team-dot {
-    border-color: #924744;
-    background: #e9a39b;
-}
-
-.button-team {
-    background: #d9e8ed;
-    color: #365d7f;
-    border-color: #596a6a;
-    box-shadow: 0 2px 0 #596a6a;
-}
-
-.red-team .button-team {
-    background: #f1ddd4;
-    color: #914f47;
-    border-color: #7f655a;
-    box-shadow: 0 2px 0 #7f655a;
-}
-
-.team-heading button {
-    min-height: 27px;
-    padding: 4px 8px;
-    font-size: 10px;
-}
-
-.roster {
-    list-style: none;
-    display: grid;
-    gap: 6px;
-    margin: 9px 0 0;
-    padding: 0;
-}
-
-.roster:empty::after {
-    content: 'No players yet';
-    color: #939481;
-    font-size: 10px;
-    padding: 2px 0;
-}
-
-.spectator-team .roster:empty::after {
-    content: 'Nobody watching yet';
-}
-
-.roster li {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 6px;
-    min-height: 24px;
-    padding: 4px 6px;
-    border-radius: 3px;
-    background: #f0eddf;
+.admin-match-actions button {
+    min-height: 34px;
+    padding: 7px 11px;
     font-size: 11px;
-    line-height: 1.5;
-    overflow-wrap: anywhere;
-}
-
-.roster-name {
-    min-width: 0;
-    flex: 1;
-    overflow-wrap: anywhere;
-}
-
-.roster-actions {
-    display: flex;
-    gap: 3px;
-    flex-shrink: 0;
-}
-
-.roster button {
-    min-height: 22px;
-    padding: 2px 5px;
-    border-width: 1px;
-    border-radius: 3px;
-    background: #e5ddc7;
-    color: var(--ink);
-    box-shadow: 0 1px 0 var(--ink);
-    font-size: 9px;
-}
-
-.team-assignment {
-    flex: 0 0 auto;
-    width: 80px;
-    min-height: 25px;
-    padding: 3px 4px;
-    border-width: 1px;
-    background: #fff9e9;
-    font-size: 9px;
-}
-
-.roster .host-badge, .roster .you-badge {
-    margin-left: 4px;
-    color: #7a806a;
-    font-size: 8px;
-    font-weight: 900;
-    letter-spacing: .05em;
-}
-
-.host-controls {
-    display: grid;
-    gap: 11px;
-    padding: 15px 0;
-    border-bottom: 1px solid #ded9c8;
-}
-
-.host-controls h3, .chat-section h3 {
-    font-size: 11px;
-}
-
-.host-controls h3 {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-}
-
-.host-controls h3 > span {
-    padding: 3px 5px;
-    border-radius: 3px;
-    background: #e8e6d2;
-    color: #7a8063;
-    font-size: 8px;
-    letter-spacing: .08em;
-}
-
-.rounds-field {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-}
-
-.rounds-field label {
-    color: #6a705e;
-    font-size: 11px;
-}
-
-.rounds-field select {
-    width: 62px;
-    min-height: 32px;
-    padding: 4px 8px;
-    font-size: 12px;
-}
-
-.host-controls > button {
-    justify-content: space-between;
-    width: 100%;
-    min-height: 35px;
-    padding: 8px 11px;
-    font-size: 11px;
-}
-
-.chat-section {
-    padding-top: 15px;
-}
-
-.chat-log {
-    height: 145px;
-    margin: 10px 0 9px;
-    padding: 9px;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    border: 1px solid #d8d4c2;
-    border-radius: 4px;
-    background: #f4f0e1;
-    font-size: 10px;
-    line-height: 1.6;
-    scrollbar-width: thin;
-    overflow-wrap: anywhere;
-}
-
-.chat-log:empty::before {
-    content: 'Say hello to your room.';
-    color: #929482;
-}
-
-.chat-log p, .chat-message {
-    margin-bottom: 6px;
-}
-
-.chat-log strong, .chat-author {
-    color: #4d5e43;
-}
-
-.chat-system, .system-message {
-    color: #8a8d77;
-    font-style: italic;
-}
-
-.chat-form {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-}
-
-.chat-form input {
-    min-height: 35px;
-    padding: 7px 8px;
-    font-size: 11px;
-}
-
-.chat-form button {
-    flex-shrink: 0;
-    min-height: 32px;
-    padding: 6px 8px;
-    font-size: 10px;
-}
-
-.page-footnote {
-    margin-top: 25px;
-    color: #7e8974;
-    font-size: 10px;
-    letter-spacing: .01em;
-    text-align: center;
 }
 
 .touch-controls {
@@ -931,62 +1069,72 @@ kbd {
     padding-top: 16px;
 }
 
-.football-app:fullscreen .page-heading, .football-app:fullscreen .page-footnote {
+.football-app:fullscreen .page-heading {
     display: none;
 }
 
 .football-app:fullscreen .site-header {
-    min-height: 52px;
-    padding-top: 10px;
-    padding-bottom: 10px;
+    min-height: 48px;
+    padding-top: 9px;
+    padding-bottom: 9px;
 }
 
-.football-app:fullscreen #footballCanvas {
-    width: min(100%, calc((100dvh - 135px) * 1.46));
-    max-width: none;
-    max-height: none;
-    height: auto;
-    object-fit: contain;
-}
-
-@media (any-pointer: coarse) {
+@media (pointer: coarse) {
     .touch-controls {
         display: flex;
     }
     .controls-help {
         margin-top: 11px;
     }
-    input:not([type="range"]), select:not([multiple]) {
-        font-size: 16px;
-    }
 }
 
-@media (max-width: 1000px) {
+@media (max-width: 1260px) {
     .football-main {
-        padding: 25px 18px 20px;
+        padding-inline: 18px;
     }
     .game-layout {
-        grid-template-columns: minmax(0, 1fr) 275px;
-        gap: 16px;
+        grid-template-columns: 210px minmax(0, 1fr) 235px;
+        gap: 14px;
     }
-    .entry-panel {
-        padding: 20px 17px 16px;
+    .chat-panel, .room-panel, .activity-panel {
+        padding-inline: 12px;
     }
     .pitch-bar {
         flex-wrap: wrap;
-        gap: 8px;
-        padding-top: 14px;
-        padding-bottom: 6px;
+        gap: 7px;
     }
     .pitch-actions {
         margin-left: auto;
     }
 }
 
+@media (max-width: 1050px) {
+    .game-layout {
+        grid-template-columns: minmax(0, 1fr) 260px;
+        grid-template-areas: 'arena lobby' 'chat lobby';
+        gap: 18px;
+    }
+    .arena-column {
+        grid-area: arena;
+    }
+    .room-sidebar {
+        grid-area: lobby;
+    }
+    .chat-sidebar {
+        grid-area: chat;
+    }
+    .chat-log {
+        height: 210px;
+    }
+    .chat-form input {
+        font-size: 12px;
+    }
+}
+
 @media (max-width: 760px) {
     .site-header {
-        min-height: 59px;
-        padding: 14px 16px;
+        min-height: 57px;
+        padding: 13px 16px;
     }
     .brand {
         font-size: 17px;
@@ -1002,87 +1150,47 @@ kbd {
         display: none;
     }
     .football-main {
-        padding: 22px 14px 20px;
+        padding: 21px 14px 24px;
     }
     .page-heading {
         margin-bottom: 17px;
     }
+    .page-heading h1 {
+        font-size: 29px;
+    }
     .heading-note {
         display: none;
     }
-    .page-heading h1 {
-        font-size: 30px;
-    }
     .game-layout {
         grid-template-columns: minmax(0, 1fr);
+        grid-template-areas: 'arena' 'lobby' 'chat';
         gap: 20px;
     }
     .room-sidebar {
-        width: 100%;
+        grid-template-columns: 1fr 1fr;
+        align-items: start;
+        gap: 16px;
     }
     .entry-panel {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        column-gap: 20px;
-        padding: 22px;
-    }
-    .panel-intro {
-        grid-column: 1 / -1;
-    }
-    .panel-intro > p:last-child {
-        margin-top: 7px;
-    }
-    .name-field {
-        grid-column: 1 / -1;
-        margin-top: 18px;
-        margin-bottom: 17px;
-    }
-    .form-divider {
-        display: none;
-    }
-    .entry-note, .entry-status {
-        grid-column: 1 / -1;
+        padding: 21px 18px;
     }
     .room-panel {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        column-gap: 22px;
-        padding: 20px;
+        padding: 19px 16px;
     }
-    .room-heading {
-        grid-column: 1;
+    .activity-panel {
+        padding: 19px 16px;
     }
-    .room-actions {
-        grid-column: 2;
-        grid-row: 1;
-        align-self: end;
-        padding-bottom: 0;
-    }
-    .team-lists {
-        grid-column: 1;
-        margin-top: 17px;
-    }
-    .host-controls {
-        grid-column: 1;
-    }
-    .chat-section {
-        grid-column: 2;
-        grid-row: 2 / span 2;
-        margin-top: 17px;
-        border-top: 1px solid #d9d5c2;
+    .chat-panel {
+        padding: 19px 16px 16px;
     }
     .chat-log {
-        height: 240px;
+        height: 230px;
     }
     .pitch-bar {
         flex-wrap: nowrap;
     }
     .pitch-actions {
         margin-left: 0;
-    }
-    .arena-frame {
-        max-width: 736px;
-        margin: 0 auto;
     }
 }
 
@@ -1099,16 +1207,13 @@ kbd {
         font-size: 10px;
     }
     .football-main {
-        padding: 18px 10px 16px;
+        padding: 18px 10px 22px;
     }
     .page-heading {
         padding-inline: 3px;
     }
     .page-heading h1 {
-        font-size: 28px;
-    }
-    .eyebrow {
-        font-size: 9px;
+        font-size: 26px;
     }
     .arena-frame {
         border-width: 2px;
@@ -1131,36 +1236,25 @@ kbd {
         padding-inline: 6px;
         font-size: 9px;
     }
-    .controls-help summary {
+    .room-sidebar {
+        grid-template-columns: minmax(0, 1fr);
+    }
+    .controls-help summary, .admin-panel > summary {
         padding: 12px;
+    }
+    .admin-preview {
+        font-size: 9px;
     }
     .controls-grid {
         grid-template-columns: 1fr;
         gap: 12px;
     }
-    .entry-panel {
-        display: block;
-        padding: 20px;
+    .settings-fields {
+        grid-template-columns: minmax(0, 1fr);
     }
-    .form-divider {
-        display: flex;
-    }
-    .room-panel {
-        display: block;
-        padding: 18px;
-    }
-    .room-actions {
-        padding-bottom: 15px;
-    }
-    .team-lists {
-        margin-top: 0;
-    }
-    .chat-section {
-        margin-top: 0;
-        border-top: 0;
-    }
-    .chat-log {
-        height: 145px;
+    .settings-actions {
+        align-items: stretch;
+        flex-direction: column;
     }
     .touch-controls {
         padding-inline: 4px;
@@ -1184,7 +1278,7 @@ kbd {
     }
 }
 
-@media (max-height: 600px) and (orientation: landscape) and (any-pointer: coarse) {
+@media (max-height: 600px) and (orientation: landscape) and (pointer: coarse) {
     .site-header {
         min-height: 42px;
         padding-block: 8px;
@@ -1202,17 +1296,6 @@ kbd {
     }
     .page-heading {
         display: none;
-    }
-    .arena-frame {
-        width: auto;
-        max-width: 100%;
-    }
-    #footballCanvas {
-        width: min(100%, calc((100dvh - 190px) * 1.46));
-        max-width: none;
-        max-height: none;
-        height: auto;
-        object-fit: contain;
     }
     .touch-controls {
         padding-block: 5px;
@@ -1245,4 +1328,3 @@ kbd {
         scroll-behavior: auto !important;
     }
 }
-

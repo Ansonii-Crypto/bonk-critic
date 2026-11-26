@@ -1,15 +1,22 @@
 # Football
 
 The unlisted game page is available at `/football/`. It is excluded from the
-site navigation and asks search engines not to index it. Share the room's invite
-link to bring another player into the same match.
+site navigation and asks search engines not to index it. Everyone visiting this
+link joins the same shared football lobby.
 
 ## Playing
 
-Create a room, or paste a room code or invite link. Choose Blue, Red or Spectate.
-The host can assign teams, remove members, set the winning score from 1 to 9,
-start a match, return to the lobby or start a rematch. Each side supports four
-players, with up to sixteen room members including spectators.
+Enter a display name and choose Join football. New arrivals join the queue; in
+the lobby they fill available places immediately. During a game, they wait for
+the next kickoff after a goal. Places are filled in queue order, with up to four
+players per side. Players can request Blue or Red, choose either team, or opt out
+and spectate. An occupied place is not taken away to make room for the queue.
+
+Between games, each team player has a Ready button and a visible ready status.
+When both teams have a connected player and every connected team player is
+ready, the server starts a new game automatically. Spectators and queued
+players do not block the ready check. Readiness resets when the lobby roster or
+match settings change. Site administrators can also start or end a game.
 
 Move with WASD or the arrow keys. X, Space and Shift kick; releasing the key
 rearms the next successful kick. Holding a kick reduces movement force to 70%.
@@ -19,10 +26,31 @@ holding movement and kick together. Fullscreen and sound controls are below the
 pitch.
 
 Guests choose a room display name. If a visitor is already signed into Bonk
-Critic, the server uses that verified Bonk identity. Room hosting is separate
-from site administrator permissions. Reloading the same tab resumes its seat
+Critic, the server uses that verified Bonk identity. Administrator controls
+require the site's existing account sign-in and elevated administrator session;
+joining first does not grant permissions. Reloading the same tab resumes its seat
 using a room-specific credential, without placing account credentials in the
 invite link.
+
+## Match settings
+
+An administrator with access enabled can change these values between games:
+
+| Setting | Native default | Meaning |
+| --- | ---: | --- |
+| First to | 3 | Goals needed to win a game |
+| Goal opening | 13 | Distance between the goal posts in physics units; -1 closes both goals and disables scoring |
+| Kick strength | 15 | Impulse applied to the ball by a kick |
+| Movement force | 32 | Player acceleration force, which also affects movement speed |
+| Ball radius | 0.7 | Ball size in physics units |
+| Player radius | 1 | Player/disc size in physics units |
+| Pitch width | 730 | Width in display pixels |
+| Pitch height | 500 | Height in display pixels |
+
+The server validates every setting, including whether the goal opening fits in
+the pitch. The same configuration drives server physics, local prediction and
+the rendered field. Closed goals provide a practice game; an administrator can
+return it to the lobby. Settings cannot change during an active game.
 
 ## Mechanics and provenance
 
@@ -60,13 +88,17 @@ join Bonk's public rooms or grant Bonk account XP.
 `FootballRoom` is an authoritative Cloudflare Durable Object. It advances physics
 at 30 Hz and sends snapshots at 15 Hz. Clients send held input flags and use the
 same physics for bounded local prediction, with remote-state interpolation.
-Only the server changes positions, scores, membership and host permissions.
+Only the server changes positions, scores, membership, queue order, readiness
+and administrator permissions. Administrator actions revalidate the existing
+database sessions and linked Bonk account on the server.
 
-The Worker exposes room creation, room information, joining and a ticketed
-WebSocket under `/api/football/rooms`. WebSocket tickets are single-use and expire
+The Worker exposes lobby information and joining at `/api/football/lobby`, and
+a ticketed WebSocket under `/api/football/rooms`. Legacy room URLs are aliases
+for the shared lobby and cannot create separate games. WebSocket tickets are single-use and expire
 after 30 seconds. Resume credentials rotate, inputs expire after one second,
 silent connections close after fifteen seconds, and disconnected seats have a
-fifteen-second grace period. Empty rooms expire after thirty minutes. Chat,
+fifteen-second grace period. Idle membership is cleared without discarding the
+shared match configuration. Chat,
 message sizes, input rates and roster sizes are bounded.
 
 Deploy the existing Worker with its `FOOTBALL_ROOMS` binding and `football-v1`
