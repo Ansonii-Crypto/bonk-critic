@@ -10,6 +10,14 @@ database_id = "87c7bcb9-abba-4c00-a216-60bc81ac647f"
 PRIMARY_BONK_ID = "3177088"
 # Set ALLOWED_ORIGIN as a secret, not here.
 
+[[durable_objects.bindings]]
+name = "FOOTBALL_ROOMS"
+class_name = "FootballRoom"
+
+[[migrations]]
+tag = "football-v1"
+new_sqlite_classes = ["FootballRoom"]
+
 # Shared IP addresses share these budgets. Account limits also apply to login.
 [[ratelimits]]
 name = "API_RATE_LIMITER"

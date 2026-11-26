@@ -1,4 +1,6 @@
 import '../../ratings.js';
+import { footballApi } from './football-api.js';
+export { FootballRoom } from './football-room.js';
 
 const H=(origin,env)=>({'Content-Type':'application/json','Access-Control-Allow-Origin':env.ALLOWED_ORIGIN||origin,'Access-Control-Allow-Credentials':'true','Vary':'Origin','Cache-Control':'no-store'});
 const J=(d,s,o,e)=>new Response(JSON.stringify(d),{status:s,headers:H(o,e)});const A=['control','execution','defending','reaction_time','chemistry','game_sense'];
@@ -69,6 +71,10 @@ function draftData(input){
 }
 async function main(r,e){let u=new URL(r.url),o=r.headers.get('Origin')||'',p=u.pathname,m=r.method;
 if(m==='OPTIONS')return new Response(null,{status:204,headers:{...H(o,e),'Access-Control-Allow-Methods':'GET,POST,PUT,DELETE,OPTIONS','Access-Control-Allow-Headers':'Content-Type, Authorization, X-Account-Session'}});
+if(p.startsWith('/api/football/')){
+ const user=m==='POST'?await identity(r,e):null;
+ return footballApi(r,e,user?{username:user.username,bonkId:user.bonk_id}:null);
+}
 if(p==='/api/tier-system'&&m==='GET')return J({cutoffs:BonkRatings.cutoffs,metadata:BonkRatings.metadata},200,o,e);
 if(p==='/api/bonk/login'&&m==='POST'){
  let b=await r.json().catch(()=>({}));

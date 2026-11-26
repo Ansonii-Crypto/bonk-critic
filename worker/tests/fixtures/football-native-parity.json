@@ -1,0 +1,941 @@
+{
+  "source": "Supplied deobfuscated Bonk client alpha2s.js:8892 and :9238; original football functions executed with modified Box2DModuleGJMod and SafeTrig. Captured 2026-11-26. Fixtures contain state data only.",
+  "scenarios": [
+    {
+      "name": "native kickoff and four-player movement",
+      "initial": {
+        "scores": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "goalHeight": 13,
+        "borderThickness": 5,
+        "borderThicknessXInner": 25,
+        "borderThicknessYInner": 70,
+        "ppm": 11,
+        "fte": -1,
+        "ftu": 120,
+        "lscr": -1,
+        "ni": true,
+        "ball": {
+          "x": 33.18181818181818,
+          "y": 22.727272727272727,
+          "xv": 0,
+          "yv": 0
+        },
+        "players": [
+          {
+            "id": 0,
+            "team": 3,
+            "name": "Player 0"
+          },
+          {
+            "id": 1,
+            "team": 2,
+            "name": "Player 1"
+          },
+          {
+            "id": 2,
+            "team": 3,
+            "name": "Player 2"
+          },
+          {
+            "id": 3,
+            "team": 2,
+            "name": "Player 3"
+          }
+        ],
+        "seed": 42,
+        "discs": [
+          {
+            "x": 10.454545454545455,
+            "y": 22.727272727272727,
+            "xv": 0,
+            "yv": 0,
+            "team": 3,
+            "kickReady": true
+          },
+          {
+            "x": 55.90909090909091,
+            "y": 22.727272727272727,
+            "xv": 0,
+            "yv": 0,
+            "team": 2,
+            "kickReady": true
+          },
+          {
+            "x": 10.454545454545455,
+            "y": 15.454545454545455,
+            "xv": 0,
+            "yv": 0,
+            "team": 3,
+            "kickReady": true
+          },
+          {
+            "x": 55.90909090909091,
+            "y": 30,
+            "xv": 0,
+            "yv": 0,
+            "team": 2,
+            "kickReady": true
+          }
+        ],
+        "sts": []
+      },
+      "segments": [
+        {
+          "ticks": 145,
+          "inputs": [
+            {
+              "right": true,
+              "down": true
+            },
+            {
+              "left": true,
+              "up": true
+            },
+            {
+              "right": true,
+              "up": true,
+              "action": true
+            },
+            {
+              "left": true,
+              "down": true,
+              "action": true
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "scores": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "goalHeight": 13,
+        "borderThickness": 5,
+        "borderThicknessXInner": 25,
+        "borderThicknessYInner": 70,
+        "ppm": 11,
+        "lscr": -1,
+        "seed": 42,
+        "ni": false,
+        "sts": [],
+        "players": [
+          {
+            "id": 0,
+            "team": 3,
+            "name": "Player 0"
+          },
+          {
+            "id": 1,
+            "team": 2,
+            "name": "Player 1"
+          },
+          {
+            "id": 2,
+            "team": 3,
+            "name": "Player 2"
+          },
+          {
+            "id": 3,
+            "team": 2,
+            "name": "Player 3"
+          }
+        ],
+        "fte": -1,
+        "ftu": -1,
+        "ball": {
+          "x": 33.18181818181818,
+          "y": 22.727272727272727,
+          "xv": 0,
+          "yv": 0
+        },
+        "discs": [
+          {
+            "x": 15.927641453794722,
+            "y": 28.200368726521997,
+            "xv": 10.103310643780384,
+            "yv": 10.103310643780384,
+            "team": 3,
+            "kickReady": true
+          },
+          {
+            "x": 50.43599490984164,
+            "y": 17.254176728023456,
+            "xv": -10.103310643780384,
+            "yv": -10.103310643780384,
+            "team": 2,
+            "kickReady": true
+          },
+          {
+            "x": 14.285712654019944,
+            "y": 11.623378255070966,
+            "xv": 7.072317450646271,
+            "yv": -7.072317450646271,
+            "team": 3,
+            "kickReady": true
+          },
+          {
+            "x": 52.07792370961642,
+            "y": 33.83116719947449,
+            "xv": -7.072317450646271,
+            "yv": 7.072317450646271,
+            "team": 2,
+            "kickReady": true
+          }
+        ]
+      }
+    },
+    {
+      "name": "crowded collisions and kick releases",
+      "initial": {
+        "scores": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "goalHeight": 13,
+        "borderThickness": 5,
+        "borderThicknessXInner": 25,
+        "borderThicknessYInner": 70,
+        "ppm": 11,
+        "fte": -1,
+        "ftu": -1,
+        "lscr": -1,
+        "ni": true,
+        "ball": {
+          "x": 32,
+          "y": 22,
+          "xv": 4,
+          "yv": 3
+        },
+        "players": [
+          {
+            "id": 0,
+            "team": 3,
+            "name": "Player 0"
+          },
+          {
+            "id": 1,
+            "team": 2,
+            "name": "Player 1"
+          },
+          {
+            "id": 2,
+            "team": 3,
+            "name": "Player 2"
+          },
+          {
+            "id": 3,
+            "team": 2,
+            "name": "Player 3"
+          }
+        ],
+        "seed": 42,
+        "discs": [
+          {
+            "x": 30,
+            "y": 22,
+            "xv": 8,
+            "yv": 0,
+            "team": 3,
+            "kickReady": true
+          },
+          {
+            "x": 34,
+            "y": 22,
+            "xv": -8,
+            "yv": 0,
+            "team": 2,
+            "kickReady": true
+          },
+          {
+            "x": 32,
+            "y": 24,
+            "xv": 0,
+            "yv": -8,
+            "team": 3,
+            "kickReady": true
+          },
+          {
+            "x": 32,
+            "y": 20,
+            "xv": 0,
+            "yv": 8,
+            "team": 2,
+            "kickReady": true
+          }
+        ],
+        "sts": []
+      },
+      "segments": [
+        {
+          "ticks": 12,
+          "inputs": [
+            {
+              "right": true,
+              "action": true
+            },
+            {
+              "left": true,
+              "action": true
+            },
+            {
+              "up": true,
+              "action": true
+            },
+            {
+              "down": true,
+              "action": true
+            }
+          ]
+        },
+        {
+          "ticks": 1,
+          "inputs": [
+            {},
+            {},
+            {},
+            {}
+          ]
+        },
+        {
+          "ticks": 25,
+          "inputs": [
+            {
+              "right": true,
+              "up": true,
+              "action": true
+            },
+            {
+              "left": true,
+              "down": true,
+              "action": true
+            },
+            {
+              "up": true,
+              "action": true
+            },
+            {
+              "down": true,
+              "action": true
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "scores": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "goalHeight": 13,
+        "borderThickness": 5,
+        "borderThicknessXInner": 25,
+        "borderThicknessYInner": 70,
+        "ppm": 11,
+        "lscr": -1,
+        "seed": 42,
+        "ni": false,
+        "sts": [],
+        "players": [
+          {
+            "id": 0,
+            "team": 3,
+            "name": "Player 0"
+          },
+          {
+            "id": 1,
+            "team": 2,
+            "name": "Player 1"
+          },
+          {
+            "id": 2,
+            "team": 3,
+            "name": "Player 2"
+          },
+          {
+            "id": 3,
+            "team": 2,
+            "name": "Player 3"
+          }
+        ],
+        "fte": -1,
+        "ftu": -1,
+        "ball": {
+          "x": 35.813321033994725,
+          "y": 26.251723060832973,
+          "xv": 2.9295854514982285,
+          "yv": 4.545897671020965
+        },
+        "discs": [
+          {
+            "x": 32.56486535053046,
+            "y": 19.956567985756823,
+            "xv": 5.242863008416984,
+            "yv": -5.847513726922025,
+            "team": 3,
+            "kickReady": false
+          },
+          {
+            "x": 33.104685154944626,
+            "y": 25.000035610710714,
+            "xv": -5.381435512559972,
+            "yv": 6.981465739182312,
+            "team": 2,
+            "kickReady": false
+          },
+          {
+            "x": 30.81331494703774,
+            "y": 21.780084183809137,
+            "xv": -0.3599082872896072,
+            "yv": -6.421056394494165,
+            "team": 3,
+            "kickReady": false
+          },
+          {
+            "x": 33.95802464488042,
+            "y": 22.498623407949825,
+            "xv": 1.334947545550106,
+            "yv": 5.36883080542456,
+            "team": 2,
+            "kickReady": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "fast wall and glancing post contacts",
+      "initial": {
+        "scores": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "goalHeight": 13,
+        "borderThickness": 5,
+        "borderThicknessXInner": 25,
+        "borderThicknessYInner": 70,
+        "ppm": 11,
+        "fte": -1,
+        "ftu": -1,
+        "lscr": -1,
+        "ni": true,
+        "ball": {
+          "x": 14,
+          "y": 8,
+          "xv": -38,
+          "yv": -24
+        },
+        "players": [
+          {
+            "id": 0,
+            "team": 3,
+            "name": "Player 0"
+          },
+          {
+            "id": 1,
+            "team": 2,
+            "name": "Player 1"
+          },
+          {
+            "id": 2,
+            "team": 3,
+            "name": "Player 2"
+          },
+          {
+            "id": 3,
+            "team": 2,
+            "name": "Player 3"
+          }
+        ],
+        "seed": 42,
+        "discs": [
+          {
+            "x": 10.454545454545455,
+            "y": 22.727272727272727,
+            "xv": 0,
+            "yv": 0,
+            "team": 3,
+            "kickReady": true
+          },
+          {
+            "x": 55.90909090909091,
+            "y": 22.727272727272727,
+            "xv": 0,
+            "yv": 0,
+            "team": 2,
+            "kickReady": true
+          },
+          {
+            "x": 10.454545454545455,
+            "y": 15.454545454545455,
+            "xv": 0,
+            "yv": 0,
+            "team": 3,
+            "kickReady": true
+          },
+          {
+            "x": 55.90909090909091,
+            "y": 30,
+            "xv": 0,
+            "yv": 0,
+            "team": 2,
+            "kickReady": true
+          }
+        ],
+        "sts": []
+      },
+      "segments": [
+        {
+          "ticks": 80,
+          "inputs": []
+        }
+      ],
+      "expected": {
+        "scores": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "goalHeight": 13,
+        "borderThickness": 5,
+        "borderThicknessXInner": 25,
+        "borderThicknessYInner": 70,
+        "ppm": 11,
+        "lscr": -1,
+        "seed": 42,
+        "ni": false,
+        "sts": [],
+        "players": [
+          {
+            "id": 0,
+            "team": 3,
+            "name": "Player 0"
+          },
+          {
+            "id": 1,
+            "team": 2,
+            "name": "Player 1"
+          },
+          {
+            "id": 2,
+            "team": 3,
+            "name": "Player 2"
+          },
+          {
+            "id": 3,
+            "team": 2,
+            "name": "Player 3"
+          }
+        ],
+        "fte": -1,
+        "ftu": -1,
+        "ball": {
+          "x": 18.69004092323819,
+          "y": 23.972969047180857,
+          "xv": 2.4583303081407024,
+          "yv": 0.9009622452866441
+        },
+        "discs": [
+          {
+            "x": 10.032688076252809,
+            "y": 25.330165489381432,
+            "xv": -0.012216759435468244,
+            "yv": 0.07537835379269864,
+            "team": 3,
+            "kickReady": true
+          },
+          {
+            "x": 55.90909090909091,
+            "y": 22.727272727272727,
+            "xv": 0,
+            "yv": 0,
+            "team": 2,
+            "kickReady": true
+          },
+          {
+            "x": 13.980632234649828,
+            "y": 14.549082316729983,
+            "xv": 0.04513997523013661,
+            "yv": -0.011591485451637804,
+            "team": 3,
+            "kickReady": true
+          },
+          {
+            "x": 55.90909090909091,
+            "y": 30,
+            "xv": 0,
+            "yv": 0,
+            "team": 2,
+            "kickReady": true
+          }
+        ]
+      }
+    },
+    {
+      "name": "round post and moving player contacts",
+      "initial": {
+        "scores": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "goalHeight": 13,
+        "borderThickness": 5,
+        "borderThicknessXInner": 25,
+        "borderThicknessYInner": 70,
+        "ppm": 11,
+        "fte": -1,
+        "ftu": -1,
+        "lscr": -1,
+        "ni": true,
+        "ball": {
+          "x": 4.4,
+          "y": 15.8,
+          "xv": -21,
+          "yv": 8
+        },
+        "players": [
+          {
+            "id": 0,
+            "team": 3,
+            "name": "Player 0"
+          },
+          {
+            "id": 1,
+            "team": 2,
+            "name": "Player 1"
+          },
+          {
+            "id": 2,
+            "team": 3,
+            "name": "Player 2"
+          },
+          {
+            "id": 3,
+            "team": 2,
+            "name": "Player 3"
+          }
+        ],
+        "seed": 42,
+        "discs": [
+          {
+            "x": 4.5,
+            "y": 17.2,
+            "xv": -10,
+            "yv": -3,
+            "team": 3,
+            "kickReady": true
+          },
+          {
+            "x": 55.90909090909091,
+            "y": 22.727272727272727,
+            "xv": 0,
+            "yv": 0,
+            "team": 2,
+            "kickReady": true
+          },
+          {
+            "x": 10.454545454545455,
+            "y": 15.454545454545455,
+            "xv": 0,
+            "yv": 0,
+            "team": 3,
+            "kickReady": true
+          },
+          {
+            "x": 55.90909090909091,
+            "y": 30,
+            "xv": 0,
+            "yv": 0,
+            "team": 2,
+            "kickReady": true
+          }
+        ],
+        "sts": []
+      },
+      "segments": [
+        {
+          "ticks": 12,
+          "inputs": [
+            {
+              "left": true,
+              "action": true
+            }
+          ]
+        },
+        {
+          "ticks": 30,
+          "inputs": [
+            {
+              "down": true
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "scores": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "goalHeight": 13,
+        "borderThickness": 5,
+        "borderThicknessXInner": 25,
+        "borderThicknessYInner": 70,
+        "ppm": 11,
+        "lscr": -1,
+        "seed": 42,
+        "ni": false,
+        "sts": [],
+        "players": [
+          {
+            "id": 0,
+            "team": 3,
+            "name": "Player 0"
+          },
+          {
+            "id": 1,
+            "team": 2,
+            "name": "Player 1"
+          },
+          {
+            "id": 2,
+            "team": 3,
+            "name": "Player 2"
+          },
+          {
+            "id": 3,
+            "team": 2,
+            "name": "Player 3"
+          }
+        ],
+        "fte": -1,
+        "ftu": -1,
+        "ball": {
+          "x": 8.773281666679383,
+          "y": 20.872649709666753,
+          "xv": 2.6879332305942567,
+          "yv": 9.23437333169372
+        },
+        "discs": [
+          {
+            "x": 3.6747033962580478,
+            "y": 27.274253213111244,
+            "xv": -0.19946630240029273,
+            "yv": 10.95154993345172,
+            "team": 3,
+            "kickReady": true
+          },
+          {
+            "x": 55.90909090909091,
+            "y": 22.727272727272727,
+            "xv": 0,
+            "yv": 0,
+            "team": 2,
+            "kickReady": true
+          },
+          {
+            "x": 10.454545454545455,
+            "y": 15.454545454545455,
+            "xv": 0,
+            "yv": 0,
+            "team": 3,
+            "kickReady": true
+          },
+          {
+            "x": 55.90909090909091,
+            "y": 30,
+            "xv": 0,
+            "yv": 0,
+            "team": 2,
+            "kickReady": true
+          }
+        ]
+      }
+    },
+    {
+      "name": "goal celebration and preserved-score reset",
+      "initial": {
+        "scores": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "goalHeight": 13,
+        "borderThickness": 5,
+        "borderThicknessXInner": 25,
+        "borderThicknessYInner": 70,
+        "ppm": 11,
+        "fte": -1,
+        "ftu": -1,
+        "lscr": -1,
+        "ni": true,
+        "ball": {
+          "x": 3,
+          "y": 22,
+          "xv": -20,
+          "yv": 0
+        },
+        "players": [
+          {
+            "id": 0,
+            "team": 3,
+            "name": "Player 0"
+          },
+          {
+            "id": 1,
+            "team": 2,
+            "name": "Player 1"
+          },
+          {
+            "id": 2,
+            "team": 3,
+            "name": "Player 2"
+          },
+          {
+            "id": 3,
+            "team": 2,
+            "name": "Player 3"
+          }
+        ],
+        "seed": 42,
+        "discs": [
+          {
+            "x": 10.454545454545455,
+            "y": 22.727272727272727,
+            "xv": 0,
+            "yv": 0,
+            "team": 3,
+            "kickReady": true
+          },
+          {
+            "x": 55.90909090909091,
+            "y": 22.727272727272727,
+            "xv": 0,
+            "yv": 0,
+            "team": 2,
+            "kickReady": true
+          },
+          {
+            "x": 10.454545454545455,
+            "y": 15.454545454545455,
+            "xv": 0,
+            "yv": 0,
+            "team": 3,
+            "kickReady": true
+          },
+          {
+            "x": 55.90909090909091,
+            "y": 30,
+            "xv": 0,
+            "yv": 0,
+            "team": 2,
+            "kickReady": true
+          }
+        ],
+        "sts": []
+      },
+      "segments": [
+        {
+          "ticks": 95,
+          "inputs": []
+        }
+      ],
+      "expected": {
+        "scores": [
+          0,
+          0,
+          1,
+          0
+        ],
+        "goalHeight": 13,
+        "borderThickness": 5,
+        "borderThicknessXInner": 25,
+        "borderThicknessYInner": 70,
+        "ppm": 11,
+        "lscr": -1,
+        "seed": 42,
+        "ni": false,
+        "sts": [],
+        "players": [
+          {
+            "id": 0,
+            "team": 3,
+            "name": "Player 0"
+          },
+          {
+            "id": 1,
+            "team": 2,
+            "name": "Player 1"
+          },
+          {
+            "id": 2,
+            "team": 3,
+            "name": "Player 2"
+          },
+          {
+            "id": 3,
+            "team": 2,
+            "name": "Player 3"
+          }
+        ],
+        "fte": -1,
+        "ftu": 117,
+        "ball": {
+          "x": 33.18181818181818,
+          "y": 22.727272727272727,
+          "xv": 0,
+          "yv": 0
+        },
+        "discs": [
+          {
+            "x": 10.454545454545455,
+            "y": 22.727272727272727,
+            "xv": 0,
+            "yv": 0,
+            "team": 3,
+            "kickReady": true
+          },
+          {
+            "x": 55.90909090909091,
+            "y": 22.727272727272727,
+            "xv": 0,
+            "yv": 0,
+            "team": 2,
+            "kickReady": true
+          },
+          {
+            "x": 10.454545454545455,
+            "y": 15.454545454545455,
+            "xv": 0,
+            "yv": 0,
+            "team": 3,
+            "kickReady": true
+          },
+          {
+            "x": 55.90909090909091,
+            "y": 30,
+            "xv": 0,
+            "yv": 0,
+            "team": 2,
+            "kickReady": true
+          }
+        ]
+      }
+    }
+  ]
+}
