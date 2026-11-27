@@ -162,7 +162,7 @@ height and both radii use sliders; the radius sliders snap in steps of 0.1:
 | Setting | Native default | Meaning |
 | --- | ---: | --- |
 | First to | 3 | Goals needed to win a game |
-| Goal height | 13 | Positive values open the middle; negative values put a solid wall in the middle with openings above and below. Zero closes the goals. The range extends to the full pitch height between its top and bottom walls. |
+| Goal height | 13 | Positive values set the opening between the posts. Zero and negative values close both goals so the ball bounces back and cannot score. The range extends to the full pitch height between its top and bottom walls. |
 | Kick strength | 15 | Impulse applied to the ball by a kick |
 | Movement speed | 32 | Player acceleration force; negative values reverse the controls at that strength |
 | Ball radius | 0.7 | Ball size in physics units |

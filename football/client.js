@@ -1,11 +1,11 @@
-import {FootballPhysics, FOOTBALL_CONSTANTS as C, getPitchGeometry} from './physics.js?v=20261127-football-13';
+import {FootballPhysics, FOOTBALL_CONSTANTS as C, getPitchGeometry} from './physics.js?v=20261127-football-14';
 import {DEFAULT_MATCH_SETTINGS, SETTING_RULES, validateMatchSettings, goalHeightLimit} from './settings.js?v=20261127-football-13';
-import {FOOTBALL_MODES, ballSpeed} from './modes.js?v=20261127-football-13';
+import {FOOTBALL_MODES, ballSpeed} from './modes.js?v=20261127-football-14';
 import {maskProfanity} from './chat-filter.js?v=20261127-football-6';
 import {DEFAULT_KEYBINDS, BINDING_ACTIONS, validateKeybinds, canonicalBindingCode} from './keybinds.js?v=20261127-football-6';
 import {initFootballAccount} from './account-menu.js?v=20261127-football-11';
 import {FootballWatcher} from './watcher.js?v=20261127-football-8';
-import {FootballPredictor} from './prediction.js?v=20261127-football-13';
+import {FootballPredictor} from './prediction.js?v=20261127-football-14';
 
 const $ = id => document.getElementById(id);
 const canvas = $('footballCanvas');
@@ -519,7 +519,7 @@ function buildSettingsFields() {
         row.append(reset); field.append(title, row);
         if (key === 'goalHeight' || key === 'moveForce') {
             const hint = document.createElement('small'); hint.className = 'setting-hint'; hint.id = 'hint-' + key;
-            hint.textContent = key === 'goalHeight' ? 'Negative: openings above and below a solid middle wall. Zero: closed.' : 'Negative values reverse the movement controls.';
+            hint.textContent = key === 'goalHeight' ? 'Zero or negative: closed goals. The ball bounces back.' : 'Negative values reverse the movement controls.';
             input.setAttribute('aria-describedby', hint.id); field.append(hint);
         }
         container.append(field);
@@ -973,9 +973,6 @@ function redrawPitch() {
     const boxHeight = Math.min(270, g.bottom - g.top - 30), boxWidth = Math.min(55, (g.right - g.left) / 5);
     paint.strokeRect(g.left, g.centerY - boxHeight / 2, boxWidth, boxHeight);
     paint.strokeRect(g.right - boxWidth, g.centerY - boxHeight / 2, boxWidth, boxHeight);
-    paint.save(); paint.lineWidth = g.wallThickness; paint.strokeStyle = 'rgba(228,239,222,.65)'; paint.beginPath();
-    for (const wall of g.wallSegments) {paint.moveTo(wall.x1, wall.y1); paint.lineTo(wall.x2, wall.y2);}
-    paint.stroke(); paint.restore();
     for (const post of g.posts) {
         paint.beginPath(); paint.arc(post.x, post.y, post.radius, 0, Math.PI * 2);
         paint.fillStyle = post.x < g.centerX ? '#448aff' : '#d32f2f'; paint.fill(); paint.stroke();

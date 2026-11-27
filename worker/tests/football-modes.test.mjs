@@ -59,13 +59,13 @@ test('goal speed captures the scoring state after native physics damping, withou
     assert.equal(goalSpeed(precise.before, precise.after), 12.3456789);
 });
 
-test('Rockets measures goals through the outer openings of a negative-height goal', () => {
-    const physics = new FootballPhysics();
-    const before = createState([], {kickoffTicks: -1, settings: {goalHeight: -1}});
-    Object.assign(before.ball, {x: 3, y: 15, xv: -20, yv: 0});
-    const after = physics.step(before);
-    assert.equal(after.scores[2], 1);
-    assert.equal(goalSpeed(before, after), Math.hypot(after.ball.xv, after.ball.yv));
+test('Rockets never ranks a goal when either scoring state has closed goals', () => {
+    for (const goalHeight of [0, -0.1, -1, -13]) {
+        for (const changed of ['before', 'after']) {
+            const pair = goalStates(); pair[changed].goalHeight = goalHeight;
+            assert.equal(goalSpeed(pair.before, pair.after), null);
+        }
+    }
 });
 
 test('goal speed rejects stale celebrations, kickoff, disabled goals, and invalid score transitions', () => {

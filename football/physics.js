@@ -99,17 +99,16 @@ export function getPitchGeometry(state = {}) {
     const centerX = width / 2;
     const centerY = height / 2;
     const bottom = height - top;
-    const span = Math.min(Math.abs(goalHeight * ppm), bottom - top);
+    const span = goalHeight > 0 ? Math.min(goalHeight * ppm, bottom - top) : 0;
     const start = centerY - span / 2;
     const end = centerY + span / 2;
     const interval = (top, bottom) => ({top, bottom});
     const nonempty = intervals => intervals.filter(range => range.bottom - range.top > 1e-8);
-    const goalOpenings = nonempty(goalHeight > 0 ? [interval(start, end)]
-        : goalHeight < 0 ? [interval(top, start), interval(end, bottom)] : []);
+    const goalOpenings = nonempty(goalHeight > 0 ? [interval(start, end)] : []);
     const sideWalls = nonempty(goalHeight > 0 ? [interval(top, start), interval(end, bottom)]
-        : goalHeight < 0 ? [interval(start, end)] : [interval(top, bottom)]);
+        : [interval(top, bottom)]);
     const goalEnabled = goalOpenings.length > 0;
-    const goalInverted = goalHeight < 0;
+    const goalInverted = false;
     const pixels = {
         width,
         height,
@@ -119,8 +118,8 @@ export function getPitchGeometry(state = {}) {
         right: width - left,
         top,
         bottom,
-        goalTop: centerY - goalHeight * ppm / 2,
-        goalBottom: centerY + goalHeight * ppm / 2,
+        goalTop: goalHeight > 0 ? centerY - goalHeight * ppm / 2 : centerY,
+        goalBottom: goalHeight > 0 ? centerY + goalHeight * ppm / 2 : centerY,
         middleTop: start,
         middleBottom: end,
         wallThickness: 5,
@@ -152,7 +151,7 @@ export function getPitchGeometry(state = {}) {
     world.sideWalls = sideWalls.map(range => ({top: range.top / ppm, bottom: range.bottom / ppm}));
     world.wallSegments = pixels.wallSegments.map(segment => Object.fromEntries(Object.entries(segment).map(([key, value]) => [key, value / ppm])));
     world.posts = pixels.posts.map(post => ({x: post.x / ppm, y: post.y / ppm, radius: post.radius / ppm}));
-    return {ppm, goalEnabled, goalInverted, goalMode: goalHeight > 0 ? 'center' : goalInverted ? 'outer' : 'closed', pixels, world};
+    return {ppm, goalEnabled, goalInverted, goalMode: goalHeight > 0 ? 'center' : 'closed', pixels, world};
 }
 
 function outputBody(body) {
@@ -187,7 +186,7 @@ function createPitch(world, state) {
     const halfWidth = (settings.pitchWidth - 2 * (state.borderThickness + state.borderThicknessXInner)) / ppm / 2;
     const halfHeight = (settings.pitchHeight - 2 * (state.borderThickness + state.borderThicknessYInner)) / ppm / 2;
     const halfGoal = Math.min(Math.abs(state.goalHeight) / 2, halfHeight);
-    const goalEnabled = state.goalHeight > 0 || (state.goalHeight < 0 && halfGoal < halfHeight - 1e-9);
+    const goalEnabled = state.goalHeight > 0;
     const wall = 5 / ppm;
     const definition = new BodyDef();
     definition.type = Body.b2_staticBody;
@@ -213,13 +212,10 @@ function createPitch(world, state) {
             [[halfWidth, halfGoal], [halfWidth + wall, halfGoal], [halfWidth + wall, halfHeight], [halfWidth, halfHeight]],
         );
     } else if (state.goalHeight <= 0) {
-        const solidHalfHeight = state.goalHeight === 0 ? halfHeight : halfGoal;
-        if (solidHalfHeight > 1e-9) {
-            polygons.push(
-                [[-halfWidth, solidHalfHeight], [-halfWidth - wall, solidHalfHeight], [-halfWidth - wall, -solidHalfHeight], [-halfWidth, -solidHalfHeight]],
-                [[halfWidth, -solidHalfHeight], [halfWidth + wall, -solidHalfHeight], [halfWidth + wall, solidHalfHeight], [halfWidth, solidHalfHeight]],
-            );
-        }
+        polygons.push(
+            [[-halfWidth, halfHeight], [-halfWidth - wall, halfHeight], [-halfWidth - wall, -halfHeight], [-halfWidth, -halfHeight]],
+            [[halfWidth, -halfHeight], [halfWidth + wall, -halfHeight], [halfWidth + wall, halfHeight], [halfWidth, halfHeight]],
+        );
     }
     for (const vertices of polygons) {
         fixture.shape = new Polygon();
@@ -344,11 +340,7 @@ export class FootballPhysics {
             const scores = state.scores.slice();
             let lastScorer = state.lscr;
             let goalScored = false;
-            let openGoalBand = state.goalHeight > 0;
-            if (state.goalHeight < 0) {
-                const y = ball.GetPosition().y;
-                openGoalBand = getPitchGeometry(state).world.goalOpenings.some(range => y > range.top && y < range.bottom);
-            }
+            const openGoalBand = state.goalHeight > 0;
             if (!coast && !practice && state.ftu === -1 && state.fte === -1 && openGoalBand) {
                 const x = ball.GetPosition().x;
                 const leftGoal = (state.borderThickness + state.borderThicknessXInner) / state.ppm;

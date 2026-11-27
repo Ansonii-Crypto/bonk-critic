@@ -1,4 +1,4 @@
-import {FootballPhysics, FOOTBALL_CONSTANTS} from './physics.js?v=20261127-football-13';
+import {FootballPhysics, FOOTBALL_CONSTANTS} from './physics.js?v=20261127-football-14';
 
 const DT = 1000 / FOOTBALL_CONSTANTS.TICK_RATE, EPSILON = 1e-7;
 const finite = (value, fallback = 0) => Number.isFinite(value) ? value : fallback;
