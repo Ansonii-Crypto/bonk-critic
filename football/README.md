@@ -70,7 +70,8 @@ supplied references: `Math.hypot(ball.xv, ball.yv)`, captured from the scoring
 physics tick. Velocity is already in metres per second. Rankings keep full
 precision and only round the displayed value.
 
-Rockets also displays live ball speed underneath the ball. Pitch vectors are
+Rockets displays live ball speed underneath the ball in the same font and
+colour as the player names. Pitch vectors are
 cached at the canvas's displayed pixel resolution so enlarging the game does
 not enlarge a low-resolution image of the posts, lines and grass pattern.
 
@@ -90,10 +91,17 @@ Escape releases controls. Touch buttons support
 holding movement and kick together. Fullscreen, sound and Leave controls
 sit over the pitch. Fullscreen expands the pitch and its overlays to the entire
 viewport; Exit fullscreen or the browser's Escape key returns to the page.
-Teams are shown automatically between games. Hide game UI, beside the page
-heading, hides every overlay and control inside the pitch while preserving the
-game. Escape, or a double tap on a touch screen, restores those controls.
-The page scrolls underneath its header.
+Normal view puts chat to the left of the pitch and administrator settings to
+the right, with a centred team dock capped at 760 pixels. Smaller screens
+stack these panels underneath the game. Fullscreen moves chat onto the field
+and puts settings in a drawer opened with the arrow on the right edge. Inputs,
+pending edits and chat history survive these moves.
+
+Teams are shown automatically between games. Hide game UI hides overlays
+inside the pitch while leaving normal side panels visible. Hovering or tapping
+the pitch's top-right corner reveals the toolbar without restoring other
+overlays. Its Show game UI button restores them. Escape and a double tap on
+the pitch also restore controls. The page scrolls underneath its header.
 
 Visitors can watch without signing in. Joining requires a verified Bonk
 identity; anonymous joins are rejected on the server. Administrator controls
@@ -199,6 +207,13 @@ this coast, and the server continues sending snapshots until voting starts.
 `FootballRoom` is an authoritative Cloudflare Durable Object. It advances physics
 at 30 Hz and sends snapshots at 15 Hz. Clients send held input flags and use the
 same physics for bounded local prediction, with remote-state interpolation.
+`prediction.js` keeps a bounded timeline of local held inputs and replays
+elapsed physics ticks rather than treating wire acknowledgements as ticks.
+The prediction clock continues across snapshots. Normal predicted movement
+renders directly; only corrections to authoritative state are smoothed.
+Replay is capped at 250 milliseconds and eight steps. Other players retain
+their interpolation buffer. The server's movement force and tick rate are
+unchanged.
 Only the server changes positions, scores, membership, queue order, readiness
 and administrator permissions. Administrator actions revalidate the existing
 database sessions and linked Bonk account on the server.

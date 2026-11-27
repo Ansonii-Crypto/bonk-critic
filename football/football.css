@@ -3111,3 +3111,333 @@ kbd {
         flex-wrap: wrap;
     }
 }
+
+/* Desktop docks sit outside the game and remain visible when game UI is hidden. */
+.game-layout {
+    display: grid;
+    grid-template-columns: minmax(190px, 230px) minmax(0, 1fr) minmax(230px, 290px);
+    grid-template-areas: 'chat arena settings';
+    align-items: start;
+    gap: 18px;
+}
+
+.arena-column {
+    grid-area: arena;
+    min-width: 0;
+}
+
+.side-dock {
+    min-width: 0;
+    padding: 15px;
+    border: 2px solid var(--ink);
+    border-radius: 7px;
+    background: var(--paper);
+    box-shadow: 0 3px 0 var(--ink);
+}
+
+#chatDock {
+    grid-area: chat;
+}
+
+#settingsDock {
+    grid-area: settings;
+    min-height: 0;
+    max-height: max(320px, calc(100dvh - 250px));
+    overflow-y: auto;
+    scrollbar-width: thin;
+}
+
+#chatDock #footballChat {
+    position: static;
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+    color: var(--text);
+    text-shadow: none;
+}
+
+#chatDock .chat-topline {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 13px;
+}
+
+#chatDock .chat-topline h2 {
+    font-size: 18px;
+}
+
+#chatDock .chat-filter-option {
+    color: var(--muted);
+    font-size: 9px;
+}
+
+#chatDock .chat-log,
+#chatDock .chat-log:empty {
+    display: block;
+    height: 330px;
+    min-height: 140px;
+    max-height: max(140px, calc(100dvh - 360px));
+    margin-bottom: 10px;
+    padding: 8px;
+    border: 1px solid #c7c8b6;
+    background: #f3efdf;
+    color: var(--text);
+    font-size: 11px;
+    text-shadow: none;
+    scrollbar-color: #99aa88 #f3efdf;
+}
+
+#chatDock .chat-log strong {
+    color: #36532f;
+}
+
+#chatDock .chat-log:empty::before {
+    content: 'No messages yet.';
+}
+
+#chatDock .chat-log .chat-system-message {
+    color: #596f3f;
+}
+
+#chatDock .chat-form input {
+    border-color: #a4ad96;
+    background: #fffdf5;
+    color: var(--text);
+    font-size: 12px;
+}
+
+#chatDock .chat-form button {
+    border-color: #536a45;
+    background: var(--green);
+}
+
+.settings-empty {
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.7;
+}
+
+#settingsDock #hostControls {
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+}
+
+#settingsDock #hostControls > summary {
+    flex-wrap: wrap;
+    gap: 7px;
+    padding: 0 0 15px;
+    font-size: 14px;
+}
+
+#settingsDock #hostControls > summary .admin-preview {
+    font-size: 9px;
+}
+
+#settingsDock .admin-controls {
+    padding: 0;
+}
+
+#settingsDock .settings-fields,
+#pitchWrap:fullscreen > #hostControls .settings-fields {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+}
+
+#settingsDock .settings-actions {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 10px;
+}
+
+#settingsDock .settings-actions button {
+    width: 100%;
+}
+
+#roomPanel {
+    width: min(760px, 80%);
+    max-width: 760px;
+    margin-inline: auto;
+}
+
+.game-ui-hotspot,
+.fullscreen-settings-toggle,
+.close-fullscreen-settings {
+    display: none;
+}
+
+.field-ui-toggle {
+    display: inline-flex;
+}
+
+#pitchWrap:fullscreen > #fullscreenSettingsToggle:not([hidden]) {
+    position: absolute;
+    z-index: 44;
+    top: 50%;
+    right: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 31px;
+    min-height: 70px;
+    padding: 4px;
+    border: 1px solid #ffffff80;
+    border-right: 0;
+    border-radius: 7px 0 0 7px;
+    background: #213e2de6;
+    color: #ffffff;
+    box-shadow: -2px 0 8px #172b2030;
+    font-size: 29px;
+    transform: translateY(-50%);
+}
+
+#fullscreenSettingsToggle > span {
+    margin: 0;
+}
+
+#pitchWrap:fullscreen > #hostControls {
+    position: absolute;
+    z-index: 40;
+    inset: 0 0 0 auto;
+    width: min(360px, calc(100% - 36px));
+    height: 100%;
+    max-height: 100%;
+    margin: 0;
+    padding: max(18px, env(safe-area-inset-top)) 17px max(18px, env(safe-area-inset-bottom));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border: 0;
+    border-left: 2px solid var(--ink);
+    border-radius: 0;
+    background: var(--paper);
+    box-shadow: -8px 0 22px #16301c35;
+    visibility: hidden;
+    pointer-events: none;
+    transform: translateX(102%);
+    transition: transform .18s ease, visibility .18s;
+}
+
+#pitchWrap:fullscreen.settings-drawer-open > #hostControls {
+    visibility: visible;
+    pointer-events: auto;
+    transform: translateX(0);
+}
+
+#pitchWrap:fullscreen.settings-drawer-open > #fullscreenSettingsToggle {
+    right: min(360px, calc(100% - 36px));
+}
+
+#pitchWrap:fullscreen > #hostControls > summary {
+    min-height: 40px;
+    padding: 5px 57px 16px 0;
+}
+
+#pitchWrap:fullscreen > #hostControls .admin-controls {
+    padding: 0;
+}
+
+#pitchWrap:fullscreen > #hostControls .close-fullscreen-settings {
+    position: absolute;
+    top: max(17px, env(safe-area-inset-top));
+    right: 14px;
+    display: inline-flex;
+    min-height: 27px;
+    padding: 5px 7px;
+    font-size: 10px;
+}
+
+/* A small invisible target reveals the toolbar without restoring other panels. */
+#pitchWrap.hide-game-ui > #gameUiHotspot {
+    position: absolute;
+    z-index: 50;
+    top: 0;
+    right: 0;
+    display: block !important;
+    width: min(230px, 65%);
+    height: 58px;
+    min-height: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+    opacity: 0;
+    pointer-events: auto;
+}
+
+#pitchWrap.hide-game-ui > #fieldToolbar {
+    z-index: 51;
+    display: flex !important;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity .12s;
+}
+
+#pitchWrap.hide-game-ui:has(> #gameUiHotspot:hover) > #fieldToolbar,
+#pitchWrap.hide-game-ui:has(> #gameUiHotspot:focus-visible) > #fieldToolbar,
+#pitchWrap.hide-game-ui > #fieldToolbar:hover,
+#pitchWrap.hide-game-ui > #fieldToolbar:focus-within,
+#pitchWrap.hide-game-ui.reveal-hidden-toolbar > #fieldToolbar {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+}
+
+#pitchWrap.hide-game-ui.reveal-hidden-toolbar > #gameUiHotspot {
+    pointer-events: none;
+}
+
+@media (max-width: 1100px) {
+    .game-layout {
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-areas: 'arena' 'chat' 'settings';
+        gap: 18px;
+    }
+    .side-dock {
+        width: 100%;
+    }
+    #settingsDock {
+        max-height: none;
+        overflow: visible;
+    }
+    #chatDock .chat-log,
+    #chatDock .chat-log:empty {
+        height: 200px;
+        max-height: 260px;
+    }
+    #settingsDock .settings-fields {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    #settingsDock .settings-actions {
+        align-items: center;
+        flex-direction: row;
+    }
+    #settingsDock .settings-actions button {
+        width: auto;
+    }
+}
+
+@media (max-width: 760px) {
+    #roomPanel {
+        width: 94%;
+    }
+    .side-dock {
+        padding: 13px;
+    }
+}
+
+@media (max-width: 540px) {
+    #settingsDock .settings-fields {
+        grid-template-columns: minmax(0, 1fr);
+    }
+    #chatDock .chat-form input {
+        font-size: 16px;
+    }
+    #pitchWrap.hide-game-ui > #fieldToolbar {
+        display: grid !important;
+    }
+}

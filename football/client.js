@@ -5,6 +5,7 @@ import {maskProfanity} from './chat-filter.js?v=20261127-football-6';
 import {DEFAULT_KEYBINDS, BINDING_ACTIONS, validateKeybinds, canonicalBindingCode} from './keybinds.js?v=20261127-football-6';
 import {initFootballAccount} from './account-menu.js?v=20261127-football-8';
 import {FootballWatcher} from './watcher.js?v=20261127-football-8';
+import {FootballPredictor} from './prediction.js?v=20261127-football-10';
 
 const $ = id => document.getElementById(id);
 const canvas = $('footballCanvas');
@@ -17,34 +18,32 @@ const keys = new Map();
 const held = new Set();
 const touches = new Map();
 const physics = new FootballPhysics();
+const predictor = new FootballPredictor({physics});
 let room = null, memberId = null, socket = null, ready = false, sequence = 0;
 let flags = 0, busy = false, leaving = false, generation = 0, retries = 0, retryTimer;
 let lastState = null, predicted = null, snapshots = [], lastInputs = [];
-let lastSnapshotAt = 0, lastPredictionAt = 0, predictionSteps = 0, tick = 0;
-let latency = 0, lastFrameAt = performance.now(), audio = null, muted = false;
+let lastSnapshotAt = 0, tick = 0;
+let latency = 0, audio = null, muted = false;
 let notice = '', noticeUntil = 0, latestStatus = '', lastScores = [0, 0, 0, 0];
 let account = null, reconnecting = false;
 let settingsDirty = false, settingsSignature = '', pendingSettingsSignature = null, geometrySignature = '';
 let leaderboardSignature = '', serverClockOffset = 0;
 let gameUiHidden = false, chatEnterHeld = false, joinAfterLogin = false, selectedPreference = 0, accountLoaded = false;
 let restoreTouch = null;
+let settingsDrawerOpen = false, toolbarHideTimer = null, pointerInToolbarCorner = false;
 let activeBindings = copyBindings(DEFAULT_KEYBINDS), draftBindings = copyBindings(DEFAULT_KEYBINDS), capturingKey = null;
 const bindingLabels = {left: 'Left', right: 'Right', up: 'Up', down: 'Down', action: 'Kick'};
 const chatMessages = [];
-const smoothing = new Map();
 const seenChat = new Set();
 const viewport = {width: 730, height: 500, scale: 1, x: 0, y: 0, ratio: 1};
 const teamName = team => team === 3 ? 'Blue' : team === 2 ? 'Red' : 'Spectators';
 const self = () => room?.members.find(member => member.id === memberId);
 const isOpen = () => ready && socket?.readyState === WebSocket.OPEN;
 const movementPhase = () => room?.status === 'playing' || room?.status === 'lobby';
-const predictionOptions = () => room?.status === 'lobby' ? {practice: true} : null;
 const editable = target => target?.closest?.('input,textarea,select,button,summary,[contenteditable="true"]');
-const clone = value => JSON.parse(JSON.stringify(value));
 const settingsFingerprint = settings => JSON.stringify(Object.keys(SETTING_RULES).map(key => settings[key] ?? DEFAULT_MATCH_SETTINGS[key]));
 const countdown = deadline => Math.max(0, Math.ceil((Number(deadline || 0) - Date.now() - serverClockOffset) / 1000));
 const modeName = () => room?.mode === 'rockets' ? FOOTBALL_MODES.rockets.label : 'Balanced teams';
-const predictionStops = state => room?.status === 'playing' && state.fte === 0 && (room.mode === 'rockets' || state.scores.some(score => score >= room.settings.scoreLimit));
 
 function copyBindings(value) {
     return Object.fromEntries(BINDING_ACTIONS.map(action => [action, [...(value[action] || [])]]));
@@ -119,14 +118,53 @@ function setGameUiHidden(hidden) {
     gameUiHidden = hidden; restoreTouch = null;
     if (capturingKey) {capturingKey = null; renderBindingFields();}
     $('pitchWrap').classList.toggle('hide-game-ui', hidden);
+    clearTimeout(toolbarHideTimer); pointerInToolbarCorner = false; $('pitchWrap').classList.remove('reveal-hidden-toolbar');
+    if (hidden) setSettingsDrawer(false);
     for (const id of ['toggleGameUi', 'toggleFullscreenUi']) {
         const button = $(id); if (!button) continue;
         setText(button, hidden ? 'Show game UI' : 'Hide game UI');
         button.setAttribute('aria-pressed', String(hidden));
+        button.title = hidden ? 'Hover the top-right corner to reveal controls. Escape or double-tap also restores the UI.' : 'Hide overlays inside the pitch. Side panels remain visible.';
     }
     releaseInput();
     if (hidden) canvas.focus({preventScroll: true});
     else requestAnimationFrame(renderChat);
+}
+
+function syncSidebarPresentation() {
+    const fullscreen = document.fullscreenElement === $('pitchWrap'), admin = !!self()?.admin;
+    const chatParent = fullscreen ? $('pitchWrap') : $('chatDock');
+    if ($('footballChat').parentElement !== chatParent) chatParent.append($('footballChat'));
+    const settingsParent = fullscreen ? $('pitchWrap') : $('settingsDock');
+    if ($('hostControls').parentElement !== settingsParent) settingsParent.append($('hostControls'));
+    if (!fullscreen || !admin) settingsDrawerOpen = false;
+    $('settingsEmpty').hidden = admin;
+    $('chatEmpty').hidden = !!memberId;
+    $('hostControls').hidden = !admin;
+    $('fullscreenSettingsToggle').hidden = !fullscreen || !admin;
+    $('fullscreenSettingsToggle').setAttribute('aria-expanded', String(settingsDrawerOpen));
+    $('fullscreenSettingsToggle').setAttribute('aria-label', settingsDrawerOpen ? 'Close pitch settings' : 'Open pitch settings');
+    setText($('fullscreenSettingsToggle').querySelector('span'), settingsDrawerOpen ? '\u203a' : '\u2039');
+    $('pitchWrap').classList.toggle('settings-drawer-open', fullscreen && admin && settingsDrawerOpen);
+}
+
+function setSettingsDrawer(open) {
+    settingsDrawerOpen = !!open && document.fullscreenElement === $('pitchWrap') && !!self()?.admin;
+    if (settingsDrawerOpen) {$('hostControls').open = true; releaseInput();}
+    syncSidebarPresentation();
+}
+
+function revealHiddenToolbar() {
+    if (!gameUiHidden) return;
+    clearTimeout(toolbarHideTimer); $('pitchWrap').classList.add('reveal-hidden-toolbar');
+}
+
+function scheduleToolbarHide(delay = 250) {
+    clearTimeout(toolbarHideTimer);
+    toolbarHideTimer = setTimeout(() => {
+        if (pointerInToolbarCorner || $('fieldToolbar').matches(':hover,:focus-within')) return;
+        $('pitchWrap').classList.remove('reveal-hidden-toolbar');
+    }, delay);
 }
 
 function setText(node, text) {
@@ -187,7 +225,8 @@ function send(message) {
 
 function sendInput() {
     if (!isOpen()) return;
-    send({type: 'input', seq: ++sequence, flags: movementPhase() && self()?.team ? flags : 0});
+    const inputFlags = movementPhase() && self()?.team ? flags : 0, seq = ++sequence, at = performance.now();
+    if (send({type: 'input', seq, flags: inputFlags})) predictor.recordInput(seq, inputFlags, at);
 }
 
 function updateInput() {
@@ -223,22 +262,12 @@ function tone(frequency, duration = 0.06, volume = 0.035) {
     oscillator.start(start); oscillator.stop(start + duration);
 }
 
-function decodedInput(value = 0) {
-    return {left: !!(value & 1), right: !!(value & 2), up: !!(value & 4), down: !!(value & 8), action: !!(value & 16)};
-}
-
-function predictionInput() {
-    const result = lastInputs.map(decodedInput);
-    if (self()?.team && Number.isInteger(self().slot)) result[self().slot] = decodedInput(flags);
-    return result;
-}
-
-function acceptState(state, serverTick = 0, inputs = []) {
+function acceptState(state, serverTick = 0, inputs = [], ackSeq) {
     if (!state?.ball || !Array.isArray(state.discs)) return;
     syncPitch(state);
     const now = performance.now();
     const reset = state.ni || (lastState && state.ftu > lastState.ftu + 5);
-    if (reset) {snapshots = []; smoothing.clear();}
+    if (reset) snapshots = [];
     if (lastState && state.scores.some((score, index) => score > lastScores[index])) {
         tone(440, 0.18, 0.05);
         setTimeout(() => tone(660, 0.25, 0.04), 120);
@@ -249,15 +278,11 @@ function acceptState(state, serverTick = 0, inputs = []) {
     snapshots.push({at: now, state});
     if (snapshots.length > 12) snapshots.shift();
     lastInputs = Array.isArray(inputs) ? inputs : [];
-    lastSnapshotAt = now; lastPredictionAt = now; predictionSteps = 0;
-    predicted = self()?.team && movementPhase() ? clone(state) : null;
-    if (predicted) {
-        const ahead = Math.min(3, Math.floor(latency / 2 / (1000 / C.TICK_RATE)));
-        for (let index = 0; index < ahead; index++) {
-            if (predictionStops(predicted)) break;
-            predicted = physics.step(predicted, predictionInput(), predictionOptions()); predictionSteps++;
-        }
-    }
+    lastSnapshotAt = now;
+    predicted = self()?.team && movementPhase() ? predictor.acceptSnapshot({state, tick: serverTick, inputs: lastInputs, ackSeq}, {
+        now, rtt: latency, slot: self().slot, practice: room.status === 'lobby',
+        phaseKey: [room.status, room.rockets?.attackerId || '', self().team].join(':'),
+    }) : null;
     setText($('scoreBlue'), state.scores[3]); setText($('scoreRed'), state.scores[2]);
     updateMatchStatus();
 }
@@ -268,8 +293,8 @@ function acceptSnapshot(message) {
         if (Object.hasOwn(message, 'rockets')) room.rockets = message.rockets;
         if (Object.hasOwn(message, 'rebalanceVote')) room.rebalanceVote = message.rebalanceVote;
     }
-    if (Number.isFinite(message.serverTime)) serverClockOffset = message.serverTime - Date.now();
-    acceptState(message.state, message.tick, message.inputs);
+    if (Number.isFinite(message.serverTime)) serverClockOffset = message.serverTime + latency / 2 - Date.now();
+    acceptState(message.state, message.tick, message.inputs, message.ackSeq);
 }
 
 const watcher = new FootballWatcher({
@@ -376,6 +401,7 @@ function renderGamePanels() {
     $('pitchWrap').classList.toggle('showing-teams', !$('teamsOverlay').hidden);
     $('touchControls').hidden = !joined || !movementPhase() || !me?.team;
     $('footballChat').hidden = !joined;
+    $('chatEmpty').hidden = joined;
     $('leaveRoom').hidden = !joined;
     $('pitchWrap').classList.toggle('is-in-room', joined);
     setText($('entryTitle'), account ? 'Join the game' : 'Sign in to play');
@@ -495,7 +521,7 @@ function applyRoom(next) {
     if (!next) return;
     const oldStatus = room?.status, oldAttacker = room?.rockets?.attackerId; room = next;
     if (settingsFingerprint(room.pendingSettings || room.settings) === pendingSettingsSignature) {settingsDirty = false; pendingSettingsSignature = null;}
-    if (oldStatus !== room.status || oldAttacker !== room.rockets?.attackerId) {releaseInput(); snapshots = []; smoothing.clear(); predicted = null;}
+    if (oldStatus !== room.status || oldAttacker !== room.rockets?.attackerId) {releaseInput(); snapshots = []; predictor.reset(); predicted = null;}
     setText($('roomTitle'), room.name); setText($('roomCodeDisplay'), room.id);
     history.replaceState(null, '', location.pathname);
     renderRoster(3, $('blueRoster')); renderRoster(2, $('redRoster')); renderRoster(0, $('spectatorRoster'));
@@ -503,6 +529,7 @@ function applyRoom(next) {
     if (me && [0, 2, 3].includes(me.preferredTeam)) selectedPreference = me.preferredTeam;
     $('hostControls').hidden = !admin;
     $('adminMatchControls').hidden = !admin;
+    syncSidebarPresentation();
     updateSettings(); syncPitch(room.state);
     $('startMatch').hidden = room.status !== 'lobby';
     $('abortMatch').hidden = !playing || !admin;
@@ -570,7 +597,7 @@ async function connectSession(joined) {
     const ownGeneration = ++generation;
     clearTimeout(retryTimer); retryTimer = null;
     socket?.close(1000, 'Replaced connection');
-    ready = false; sequence = 0; memberId = joined.member.id;
+    ready = false; sequence = 0; predictor.reset(); memberId = joined.member.id;
     storeSeat(joined.room.id, joined.member);
     applyRoom(joined.room);
     const address = new URL(joined.socketPath, API);
@@ -585,7 +612,7 @@ async function connectSession(joined) {
             let message; try {message = JSON.parse(event.data);} catch {return;}
             if (message.type === 'welcome') {
                 ready = true; leaving = false; reconnecting = false; retries = 0; memberId = message.memberId;
-                applyRoom(message.room); setText($('connectionStatus'), 'Connected'); sendInput();
+                applyRoom(message.room); setText($('connectionStatus'), 'Connected'); sendInput(); send({type: 'ping', sentAt: performance.now()});
                 if (!settled) {settled = true; clearTimeout(timeout); resolve();}
             } else if (message.type === 'room') applyRoom(message.room);
             else if (message.type === 'snapshot') {
@@ -596,7 +623,8 @@ async function connectSession(joined) {
                 storeSeat(room?.id, null); returnToEntry(message.reason || 'You left the room.');
             }
             else if (message.type === 'pong') {
-                latency = Math.max(0, Math.min(2000, performance.now() - message.sentAt));
+                const measured = Math.max(0, Math.min(2000, performance.now() - message.sentAt));
+                latency = latency ? latency * .7 + measured * .3 : measured;
                 if (Number.isFinite(message.serverTime)) serverClockOffset = message.serverTime + latency / 2 - Date.now();
                 setText($('connectionStatus'), 'Connected · ' + Math.round(latency) + ' ms');
             } else if (message.type === 'error') {
@@ -607,7 +635,7 @@ async function connectSession(joined) {
         });
         connection.addEventListener('close', event => {
             if (ownGeneration !== generation) return;
-            clearTimeout(timeout); ready = false; predicted = null; releaseInput();
+            clearTimeout(timeout); ready = false; predicted = null; predictor.reset(); releaseInput();
             if (room) applyRoom(room);
             if (!settled) {settled = true; reject(Error('The room connection closed. Please join again.'));}
             if (leaving) return;
@@ -653,7 +681,8 @@ function returnToEntry(message = '') {
     clearTimeout(retryTimer); retryTimer = null;
     releaseInput(); socket?.close(1000, 'Left room'); socket = null;
     $('entryStatus').textContent = message; setText($('connectionStatus'), 'Not connected');
-    memberId = null; predicted = null; smoothing.clear(); setGameUiHidden(false);
+    memberId = null; predicted = null; predictor.reset(); setGameUiHidden(false);
+    syncSidebarPresentation();
     seenChat.clear(); chatMessages.length = 0; $('chatLog').replaceChildren();
     $('hostControls').hidden = true; $('adminMatchControls').hidden = true; $('chatInput').disabled = true; $('sendChat').disabled = true;
     settingsSignature = ''; settingsDirty = false; pendingSettingsSignature = null; leaderboardSignature = '';
@@ -737,15 +766,41 @@ $('chatInput').addEventListener('keydown', event => {
     if (!event.repeat && !chatEnterHeld) {chatEnterHeld = true; $('chatForm').requestSubmit();}
 });
 $('fullscreenToggle').addEventListener('click', async () => {
-    try {if (document.fullscreenElement) await document.exitFullscreen(); else await $('pitchWrap').requestFullscreen({navigationUI: 'hide'}); canvas.focus({preventScroll: true});}
+    try {if (document.fullscreenElement) await document.exitFullscreen(); else await $('pitchWrap').requestFullscreen({navigationUI: 'hide'}); updateFullscreenPresentation(); canvas.focus({preventScroll: true});}
     catch {showNotice('Fullscreen is unavailable in this browser.');}
 });
-$('exitFullscreen').addEventListener('click', () => {if (document.fullscreenElement) void document.exitFullscreen();});
-document.addEventListener('fullscreenchange', () => {
+$('exitFullscreen').addEventListener('click', async () => {
+    try {if (document.fullscreenElement) await document.exitFullscreen(); updateFullscreenPresentation(); canvas.focus({preventScroll: true});}
+    catch {showNotice('Unable to exit fullscreen. Use Escape to return to the page.');}
+});
+function updateFullscreenPresentation() {
     setText($('fullscreenToggle'), document.fullscreenElement ? 'Exit fullscreen' : 'Fullscreen');
     $('exitFullscreen').hidden = !document.fullscreenElement;
+    syncSidebarPresentation();
     requestAnimationFrame(() => {resizeCanvas(); renderChat();});
+}
+document.addEventListener('fullscreenchange', updateFullscreenPresentation);
+$('fullscreenSettingsToggle').addEventListener('click', () => setSettingsDrawer(!settingsDrawerOpen));
+$('closeFullscreenSettings').addEventListener('click', () => {setSettingsDrawer(false); canvas.focus({preventScroll: true});});
+for (const id of ['gameUiHotspot', 'fieldToolbar']) {
+    const target = $(id);
+    target.addEventListener('pointerenter', revealHiddenToolbar);
+    target.addEventListener('pointerleave', () => scheduleToolbarHide());
+    target.addEventListener('focusin', revealHiddenToolbar);
+    target.addEventListener('focusout', () => scheduleToolbarHide());
+}
+$('gameUiHotspot').addEventListener('click', () => {revealHiddenToolbar(); scheduleToolbarHide(3000);});
+$('fieldToolbar').addEventListener('click', event => {
+    if (event.target.closest('button')) canvas.focus({preventScroll: true});
 });
+$('pitchWrap').addEventListener('pointermove', event => {
+    if (!gameUiHidden || event.pointerType === 'touch') return;
+    const bounds = $('pitchWrap').getBoundingClientRect();
+    pointerInToolbarCorner = event.clientX >= bounds.right - Math.min(230, bounds.width * .65) && event.clientY <= bounds.top + 58;
+    if (pointerInToolbarCorner) revealHiddenToolbar();
+    else scheduleToolbarHide();
+});
+$('pitchWrap').addEventListener('pointerleave', () => {pointerInToolbarCorner = false; scheduleToolbarHide();});
 $('muteSound').addEventListener('click', () => {muted = !muted; $('muteSound').setAttribute('aria-pressed', String(muted)); setText($('muteSound'), muted ? 'Sound off' : 'Sound on'); if (!muted) warmAudio();});
 canvas.addEventListener('pointerdown', () => {canvas.focus({preventScroll: true}); warmAudio();});
 canvas.addEventListener('pointerup', event => {
@@ -765,10 +820,10 @@ window.addEventListener('keydown', event => {
     capturingKey = null; renderBindingFields(); setText($('keybindStatus'), 'Unsaved controls. Save to apply them to football.');
 }, true);
 window.addEventListener('keydown', event => {
-    if (event.code === 'Escape') {releaseInput(); if (gameUiHidden) setGameUiHidden(false);}
+    if (event.code === 'Escape') {releaseInput(); if (settingsDrawerOpen) setSettingsDrawer(false); if (gameUiHidden) setGameUiHidden(false);}
     if (['Enter', 'NumpadEnter'].includes(event.code) && !editable(event.target) && memberId) {
         event.preventDefault();
-        if (!event.repeat && !chatEnterHeld) {chatEnterHeld = true; releaseInput(); if (gameUiHidden) setGameUiHidden(false); $('chatInput').focus();}
+        if (!event.repeat && !chatEnterHeld) {chatEnterHeld = true; releaseInput(); if (gameUiHidden && document.fullscreenElement === $('pitchWrap')) setGameUiHidden(false); $('chatInput').focus();}
         return;
     }
     if (event.code === 'Escape' && event.target === $('chatInput')) {releaseInput(); canvas.focus({preventScroll: true}); return;}
@@ -876,22 +931,14 @@ function interpolated(now) {
     return {...after.state, ball: position(before.state.ball, after.state.ball), discs: after.state.discs.map((disc, slot) => position(before.state.discs[slot], disc))};
 }
 
-function smoothed(id, target, dt) {
-    const previous = smoothing.get(id);
-    if (!previous || Math.hypot(previous.x - target.x, previous.y - target.y) > 5) {smoothing.set(id, {...target}); return target;}
-    const blend = 1 - Math.exp(-dt * 28);
-    const current = {...target, x: previous.x + (target.x - previous.x) * blend, y: previous.y + (target.y - previous.y) * blend};
-    smoothing.set(id, current); return current;
+function drawNameLabel(label, x, y, maxWidth = 105) {
+    context.font = '9px Arial, sans-serif'; context.fillStyle = 'rgba(255,255,255,.9)'; context.textAlign = 'center';
+    context.fillText(label, x, y, maxWidth);
 }
 
 function draw(now) {
-    const dt = Math.min(0.05, (now - lastFrameAt) / 1000); lastFrameAt = now;
     if (predicted && movementPhase() && isOpen() && now - lastSnapshotAt < 500) {
-        let steps = 0;
-        while (now - lastPredictionAt >= 1000 / C.TICK_RATE && predictionSteps < 7 && steps++ < 3) {
-            if (predictionStops(predicted)) break;
-            predicted = physics.step(predicted, predictionInput(), predictionOptions()); lastPredictionAt += 1000 / C.TICK_RATE; predictionSteps++;
-        }
+        predicted = predictor.advance(now);
     }
     // Both members and public viewers render the same server state. A stalled
     // stream freezes the last real frame rather than replacing it with bots.
@@ -912,7 +959,7 @@ function draw(now) {
         const ownSlot = self()?.slot;
         display.discs.forEach((source, slot) => {
             if (!source) return;
-            const disc = predicted?.discs[slot] && slot === ownSlot ? smoothed('self', predicted.discs[slot], dt) : source;
+            const disc = predicted?.discs[slot] && slot === ownSlot ? predictor.renderBody('self', predicted.discs[slot], now) : source;
             const x = disc.x * geometry.ppm, y = disc.y * geometry.ppm, blue = disc.team === 3;
             context.beginPath(); context.arc(x, y, g.playerRadius, 0, Math.PI * 2);
             context.fillStyle = blue ? '#2d69b2' : '#ad3636'; context.fill();
@@ -921,21 +968,16 @@ function draw(now) {
             const member = room?.members.find(member => member.slot === slot);
             context.fillStyle = '#ffffff'; context.font = 'bold 9px Arial, sans-serif'; context.textAlign = 'center';
             context.fillText(Array.from(member?.name || display.players?.[slot]?.name || '?')[0].toUpperCase(), x, y + 0.5);
-            context.font = '9px Arial, sans-serif'; context.fillStyle = 'rgba(255,255,255,.9)';
-            context.fillText(member?.name || display.players?.[slot]?.name || 'Player', x, y + g.playerRadius + 11, 105);
+            drawNameLabel(member?.name || display.players?.[slot]?.name || 'Player', x, y + g.playerRadius + 11);
             if (slot === ownSlot) {context.beginPath(); context.moveTo(x - 3, y + g.playerRadius + 18); context.lineTo(x + 3, y + g.playerRadius + 18); context.lineTo(x, y + g.playerRadius + 14); context.closePath(); context.fill();}
         });
-        const ball = predicted?.ball && self()?.team ? smoothed('ball', predicted.ball, dt) : display.ball;
+        const ball = predicted?.ball && self()?.team ? predictor.renderBody('ball', predicted.ball, now) : display.ball;
         context.beginPath(); context.arc(ball.x * geometry.ppm, ball.y * geometry.ppm, g.ballRadius, 0, Math.PI * 2);
         context.fillStyle = '#ffffff'; context.fill();
         if (room?.mode === 'rockets') {
             const speed = ballSpeed({ball});
             if (speed !== null) {
-                const x = ball.x * geometry.ppm, y = ball.y * geometry.ppm + g.ballRadius + 12;
-                context.font = 'bold 11px Arial, sans-serif'; context.textAlign = 'center';
-                context.lineWidth = 2.5; context.strokeStyle = '#284b35';
-                const label = speed.toFixed(1) + ' m/s';
-                context.strokeText(label, x, y); context.fillStyle = '#ffffff'; context.fillText(label, x, y);
+                drawNameLabel(speed.toFixed(1) + ' m/s', ball.x * geometry.ppm, ball.y * geometry.ppm + g.ballRadius + 11);
             }
         }
     }
@@ -965,6 +1007,7 @@ setBusy(false);
 $('chatInput').disabled = true; $('sendChat').disabled = true;
 setText($('connectionStatus'), 'Not connected');
 loadAccountPreferences(null);
+syncSidebarPresentation();
 const accountMenu = initFootballAccount({
     request,
     onSession: async (session, reason) => {
