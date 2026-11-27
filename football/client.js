@@ -292,6 +292,8 @@ function acceptSnapshot(message) {
         room.status = message.status || room.status; room.mode = message.mode || room.mode; room.winner = message.winner ?? room.winner;
         if (Object.hasOwn(message, 'rockets')) room.rockets = message.rockets;
         if (Object.hasOwn(message, 'rebalanceVote')) room.rebalanceVote = message.rebalanceVote;
+        if (Object.hasOwn(message, 'transition')) room.transition = message.transition;
+        if (Object.hasOwn(message, 'phaseKind')) room.phaseKind = message.phaseKind;
     }
     if (Number.isFinite(message.serverTime)) serverClockOffset = message.serverTime + latency / 2 - Date.now();
     acceptState(message.state, message.tick, message.inputs, message.ackSeq);
@@ -397,7 +399,7 @@ function renderGamePanels() {
     const me = self(), eligible = !!(me?.connected && (me.team || me.queued));
     $('roomEntry').hidden = joined;
     $('roomPanel').hidden = !joined;
-    $('teamsOverlay').hidden = !joined || playing && !!me?.team;
+    $('teamsOverlay').hidden = !joined || voting || results || playing && !!me?.team;
     $('pitchWrap').classList.toggle('showing-teams', !$('teamsOverlay').hidden);
     $('touchControls').hidden = !joined || !movementPhase() || !me?.team;
     $('footballChat').hidden = !joined;
@@ -409,6 +411,8 @@ function renderGamePanels() {
     setText($('joinGameButton'), account ? 'Join game' : 'Sign in to join');
     $('joinGameButton').disabled = busy;
     $('gameOverlay').hidden = !voting && !results;
+    $('gameOverlay').classList.toggle('is-leaving', (voting || results) && !!room?.transition);
+    $('gameOverlay').dataset.phase = voting ? 'selection' : results ? 'leaderboard' : '';
     $('modeVotePanel').hidden = !voting;
     $('resultsPanel').hidden = !results;
     $('rebalanceNotice').hidden = !joined || !playing || !room?.rebalanceVote;
@@ -421,23 +425,32 @@ function renderGamePanels() {
     $('votingWaiting').hidden = !voting;
     if (voting) {
         const vote = room.vote, selected = vote.votes?.[memberId];
-        setText($('overlayTitle'), 'Choose the next game');
-        setText($('overlayDescription'), 'Vote for balanced football or take turns in Rockets.');
-        setText($('overlayCountdown'), countdown(vote.deadline) + 's left');
+        const continuing = !!vote.continuation, resolved = !!vote.resolved || !!room.transition;
+        const selectedMode = room.transition?.nextMode || vote.selectedMode;
+        const nextName = selectedMode === 'rockets' ? FOOTBALL_MODES.rockets.label : 'Balanced teams';
+        const scores = vote.scores || room.lastResult?.scores || [0, 0, 0, 0];
+        setText($('gameOverlay').querySelector('.overlay-heading .eyebrow'), continuing ? 'MATCH COMPLETE' : 'CHOOSE A MODE');
+        setText($('overlayTitle'), resolved ? 'Starting ' + nextName : continuing ? 'Choose the next game' : 'Choose a game mode');
+        setText($('overlayDescription'), continuing
+            ? (vote.winner ? teamName(vote.winner) + ' wins. ' : '') + 'Blue ' + scores[3] + ' · ' + scores[2] + ' Red. The next game starts automatically after voting.'
+            : 'Choose balanced football or Rockets, then ready up in the lobby.');
+        setText($('overlayCountdown'), resolved ? 'Starting…' : countdown(vote.deadline) + 's left');
         setText($('balancedVoteCount'), vote.counts?.balanced || 0);
         setText($('rocketsVoteCount'), vote.counts?.rockets || 0);
         for (const button of document.querySelectorAll('[data-mode-vote]')) {
-            button.disabled = !isOpen() || !eligible || countdown(vote.deadline) === 0;
+            button.disabled = resolved || !isOpen() || !eligible || countdown(vote.deadline) === 0;
             button.setAttribute('aria-pressed', String(selected === button.dataset.modeVote));
         }
-        setText($('votingWaiting'), !eligible ? 'Join a team to vote. Spectators can watch.'
+        setText($('votingWaiting'), resolved ? 'Starting ' + nextName + '…'
+            : !eligible ? 'Spectating. Players choose the next game.'
             : selected ? 'Your vote: ' + (selected === 'rockets' ? 'Rockets' : 'Balanced teams') + '. You can change it until voting ends.'
             : 'One vote per player. Voting closes when everyone has voted or time runs out.');
     } else if (results) {
         const result = room.results, rocketResults = result.mode === 'rockets';
+        setText($('gameOverlay').querySelector('.overlay-heading .eyebrow'), rocketResults ? 'ROCKETS COMPLETE' : 'GAME COMPLETE');
         setText($('overlayTitle'), rocketResults ? 'Fastest goals' : room.winner ? teamName(room.winner) + ' wins' : 'Game complete');
-        setText($('overlayDescription'), rocketResults ? 'Rockets results, ranked by ball speed as it crossed the goal.' : 'Get ready to vote for the next game.');
-        setText($('overlayCountdown'), 'Next vote in ' + countdown(result.deadline) + 's');
+        setText($('overlayDescription'), rocketResults ? 'Ranked by ball speed as it crossed the goal.' : 'The game has finished.');
+        setText($('overlayCountdown'), room.transition ? 'Returning to lobby…' : 'Lobby in ' + countdown(result.deadline) + 's');
         const scores = result.scores || [0, 0, 0, 0];
         setText($('resultsSummary'), rocketResults ? 'One turn per player, in join order. Speeds are measured in m/s.' : 'Blue ' + scores[3] + ' — ' + scores[2] + ' Red');
         $('rocketLeaderboard').hidden = !rocketResults;
@@ -519,7 +532,9 @@ function updateSettings() {
 
 function applyRoom(next) {
     if (!next) return;
-    const oldStatus = room?.status, oldAttacker = room?.rockets?.attackerId; room = next;
+    const oldStatus = room?.status, oldAttacker = room?.rockets?.attackerId;
+    const oldVoteId = room?.vote?.id, oldResultTime = room?.results?.finishedAt;
+    room = next;
     if (settingsFingerprint(room.pendingSettings || room.settings) === pendingSettingsSignature) {settingsDirty = false; pendingSettingsSignature = null;}
     if (oldStatus !== room.status || oldAttacker !== room.rockets?.attackerId) {releaseInput(); snapshots = []; predictor.reset(); predicted = null;}
     setText($('roomTitle'), room.name); setText($('roomCodeDisplay'), room.id);
@@ -550,8 +565,8 @@ function applyRoom(next) {
     setText($('readyButton'), me?.ready ? '✓ Ready — click to cancel' : 'Ready');
     const active = room.members.filter(member => member.connected && (member.team || (room.mode === 'rockets' && member.queued)));
     const waiting = active.filter(member => !member.ready).length;
-    setText($('readySummary'), room.status === 'voting' ? 'Choose the next mode on the pitch, then ready up.'
-        : room.status === 'results' ? 'Results are on the pitch. The next mode vote starts shortly.'
+    setText($('readySummary'), room.status === 'voting' ? room.vote?.continuation ? 'Choose the next game. It starts automatically after voting.' : 'Choose a mode on the pitch, then ready up.'
+        : room.status === 'results' ? 'Fastest goals are on the pitch. Returning to the lobby shortly.'
         : playing ? room.mode === 'rockets' ? (room.rockets?.participantIds?.includes(memberId) ? 'Your Rockets turn follows join order.' : 'New arrivals play in the next game.')
             : me?.queued ? 'Spectating until the next game.' : 'Players can vote to rebalance if someone leaves.'
         : !active.length ? 'Join a team to play.' : waiting ? active.filter(member => member.ready).length + ' / ' + active.length + ' ready.' + (active.length === 1 ? ' You can practise solo.' : ' Everyone playing must be ready.') : 'Everyone is ready. Starting…');
@@ -566,6 +581,10 @@ function applyRoom(next) {
         canvas.focus({preventScroll: true});
     }
     renderGamePanels(); updateMatchStatus();
+    if ((room.status === 'voting' || room.status === 'results')
+        && (oldStatus !== room.status || oldVoteId !== room.vote?.id || oldResultTime !== room.results?.finishedAt)) {
+        $('gameOverlay').firstElementChild.scrollTop = 0;
+    }
     if (oldStatus !== room.status && room.status !== 'playing') requestAnimationFrame(() => {$('roomPanel').scrollTop = 0;});
 }
 
@@ -576,8 +595,10 @@ function updateMatchStatus() {
         const me = self();
         const role = me?.team ? 'Playing for ' + teamName(me.team) : me?.queued ? 'Spectating until the next game' : 'Spectating';
         if (!ready) text = reconnecting ? 'Connection interrupted. Reconnecting…' : 'Connecting to room…';
-        else if (room.status === 'voting') text = 'Vote for the next game on the pitch. ' + countdown(room.vote?.deadline) + 's remaining.';
-        else if (room.status === 'results') text = modeName() + ' complete. Results are on the pitch.';
+        else if (room.status === 'voting') text = room.transition ? 'The selected game is starting.'
+            : room.vote?.continuation ? 'Vote to continue. The selected game starts automatically.'
+            : 'Choose a mode, then ready up in the lobby.';
+        else if (room.status === 'results') text = room.transition ? 'Returning to the lobby.' : 'Rockets complete. Fastest goals are on the pitch.';
         else if (room.status === 'lobby') text = role + '. Move around while you wait, then ready up.';
         else if (room.status === 'finished') text = teamName(room.winner) + ' wins. Ready up for the next game.';
         else if (lastState?.ftu >= 0) text = 'Kickoff in ' + Math.ceil(lastState.ftu / 30) + '. ' + role + '.';

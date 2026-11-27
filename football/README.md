@@ -46,9 +46,16 @@ fresh kickoff with even teams and preserves the score. No, a tie, or timeout
 continues with the current assignments for the rest of that game. Rebalancing
 only moves players already on the pitch; waiting spectators enter the next game.
 
-Game results appear over the dimmed pitch for ten seconds, followed by another
-mode vote and the next lobby. The server owns phase deadlines and voting
-eligibility.
+After a Balanced teams match, a separate screen over the dimmed pitch shows
+the final score and a vote for the next game. When voting ends, this screen
+fades out and the selected game starts automatically, without returning to
+the lobby or requiring another Ready check. New arrivals enter at this next
+game boundary. The server owns phase deadlines and voting eligibility.
+
+Rockets finishes with its fastest-goal leaderboard on a separate screen for
+ten seconds. It then fades out into the Balanced teams lobby, where players
+can practise and ready up again. The lobby team lists stay hidden during both
+end screens. Both transitions use a 350-millisecond fade.
 
 ## Rockets
 
@@ -202,9 +209,10 @@ The Canvas renderer, generated sound cues, room protocol and frontend are Bonk
 Critic implementations. This page connects to Bonk Critic rooms, and does not
 join Bonk's public rooms or grant Bonk account XP.
 
-During the ten-second results screen, bodies continue damping and colliding
-naturally. Controls, kicks, scoring and kickoff resets are disabled during
-this coast, and the server continues sending snapshots until voting starts.
+During results, the continuation vote and their fade-out, bodies continue
+damping and colliding naturally. Controls, kicks, scoring and kickoff resets
+are disabled during this coast. The server continues sending snapshots until
+the next game or lobby practice starts.
 
 ## Server and deployment
 

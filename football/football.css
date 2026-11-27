@@ -1970,6 +1970,114 @@ kbd {
     }
 }
 
+/* Mode selection and final results are a separate screen over the pitch. */
+#pitchWrap > #gameOverlay {
+    position: absolute;
+    z-index: 22;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    padding: clamp(12px, 3%, 30px);
+    overflow: hidden;
+    background: #102219de;
+    opacity: 1;
+    pointer-events: auto;
+    transition: opacity 350ms ease;
+}
+
+#pitchWrap > #gameOverlay.is-leaving {
+    opacity: 0;
+    pointer-events: none;
+}
+
+#pitchWrap > #gameOverlay.is-leaving * {
+    pointer-events: none !important;
+}
+
+#pitchWrap > #gameOverlay > .field-overlay-card {
+    width: min(720px, 100%);
+    min-height: 0;
+    max-height: 90%;
+    padding: clamp(17px, 3vw, 30px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border: 3px solid var(--ink);
+    border-radius: 9px;
+    background: var(--paper);
+    color: var(--text);
+    box-shadow: 0 6px 0 #08180f80, 0 18px 50px #07130c70;
+    text-shadow: none;
+}
+
+#gameOverlay #overlayTitle {
+    margin-top: 14px;
+    font-size: clamp(24px, 3vw, 34px);
+    line-height: 1.15;
+    letter-spacing: -.035em;
+}
+
+#gameOverlay .overlay-description {
+    margin-top: 12px;
+    font-size: 13px;
+    line-height: 1.6;
+}
+
+#gameOverlay .mode-vote-panel {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+    margin-top: 22px;
+}
+
+#gameOverlay .mode-vote-button {
+    min-width: 0;
+    padding: 16px;
+}
+
+#gameOverlay .results-panel {
+    margin-top: 18px;
+}
+
+#gameOverlay .results-summary {
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+#gameOverlay .rocket-leaderboard {
+    max-height: none;
+    overflow: visible;
+}
+
+#gameOverlay .voting-waiting {
+    margin-top: 20px;
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+@media (max-width: 620px) {
+    #pitchWrap > #gameOverlay {
+        padding: 10px;
+    }
+    #pitchWrap > #gameOverlay > .field-overlay-card {
+        max-height: 94%;
+        padding: 15px;
+        border-width: 2px;
+        border-radius: 6px;
+    }
+    #gameOverlay .mode-vote-panel {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 10px;
+        margin-top: 16px;
+    }
+    #gameOverlay .mode-vote-button {
+        padding: 12px;
+    }
+    #gameOverlay .overlay-description,
+    #gameOverlay .results-summary {
+        font-size: 12px;
+    }
+}
+
 /* Pitch-first layout: entry, teams, chat and controls belong to the field. */
 .game-layout {
     display: block;

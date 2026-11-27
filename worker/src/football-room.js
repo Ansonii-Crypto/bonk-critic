@@ -5,7 +5,7 @@ import {FOOTBALL_HUB_ID} from './football-api.js';
 
 const TICKET_TTL = 30_000, RESUME_GRACE = 15_000, HEARTBEAT_TTL = 15_000, IDLE_TTL = 30 * 60_000;
 const MAX_MEMBERS = 64, MAX_WATCHERS = 64, TEAM_SIZE = 4, MESSAGE_LIMIT = 1024;
-const MODE_VOTE_TTL = 15_000, REBALANCE_VOTE_TTL = 15_000, RESULTS_TTL = 10_000;
+const MODE_VOTE_TTL = 15_000, REBALANCE_VOTE_TTL = 15_000, RESULTS_TTL = 10_000, TRANSITION_TTL = 350;
 const STEP_MS = 1000 / 30, MAX_PUMP_DELTA = 250, MAX_CATCHUP_STEPS = 8;
 const validObject = value => value && typeof value === 'object' && !Array.isArray(value);
 const randomToken = () => crypto.randomUUID().replaceAll('-', '') + crypto.randomUUID().replaceAll('-', '');
@@ -24,8 +24,11 @@ export class FootballRoom {
             if (!saved || ![2, 3].includes(saved.version)) return;
             this.room = saved.room; this.tickNumber = saved.tick || 0;
             this.room.chat = [];
-            Object.assign(this.room, {mode:this.room.mode || 'balanced', modeSelected:this.room.modeSelected ?? false, balanceDeferred:this.room.balanceDeferred || false, pendingSettings:this.room.pendingSettings || null, vote:this.room.vote || null, rebalanceVote:this.room.rebalanceVote || null, rockets:this.room.rockets || null, results:this.room.results || null});
-            if (this.room.status === 'finished') {this.room.status = 'results'; this.room.results = {...this.room.lastResult, mode:'balanced', deadline:Date.now() + RESULTS_TTL};}
+            Object.assign(this.room, {mode:this.room.mode || 'balanced', modeSelected:this.room.modeSelected ?? false, balanceDeferred:this.room.balanceDeferred || false, pendingSettings:this.room.pendingSettings || null, vote:this.room.vote || null, transition:this.room.transition || null, rebalanceVote:this.room.rebalanceVote || null, rockets:this.room.rockets || null, results:this.room.results || null});
+            if ((this.room.status === 'finished' || this.room.status === 'results') && this.room.mode !== 'rockets' && !this.room.transition) {
+                this.room.status = 'voting'; this.room.results = null;
+                this.room.vote = {id:crypto.randomUUID(), kind:'mode', continuation:true, deadline:Date.now() + MODE_VOTE_TTL, votes:{}, winner:this.room.winner, scores:this.room.lastResult?.scores || this.room.state?.scores.slice() || [0, 0, 0, 0]};
+            } else if (this.room.status === 'finished') {this.room.status = 'results'; this.room.results = {...this.room.lastResult, mode:'rockets', deadline:Date.now() + RESULTS_TTL};}
             let joinedAt = 0;
             for (const member of this.room.members) {member.preferredTeam = [0, 2, 3].includes(member.preferredTeam) ? member.preferredTeam : 0; member.joinedAt = Math.max(member.joinedAt || 0, joinedAt + 1); joinedAt = member.joinedAt; member.connected = false; member.ready = false; member.disconnectedAt = member.disconnectedAt || Date.now(); member.pendingUntil = 0;}
             if (this.room.rockets && ![2, 3].includes(this.room.rockets.attackerTeam)) this.room.rockets.attackerTeam = this.room.members.find(member => member.id === this.room.rockets.attackerId)?.team || 3;
@@ -35,15 +38,16 @@ export class FootballRoom {
         });
     }
     ensureRoom() {
-        if (!this.room) this.room = {id:FOOTBALL_HUB_ID, name:'Football Division', hostId:null, status:'lobby', mode:'balanced', modeSelected:false, balanceDeferred:false, pendingSettings:null, vote:null, rebalanceVote:null, rockets:null, results:null, settings:{...DEFAULT_MATCH_SETTINGS, maxPerTeam:TEAM_SIZE}, state:null, winner:null, lastResult:null, members:[], chat:[], nextQueueOrder:1, lastJoinedAt:0, createdAt:Date.now(), lastActive:Date.now()};
+        if (!this.room) this.room = {id:FOOTBALL_HUB_ID, name:'Football Division', hostId:null, status:'lobby', mode:'balanced', modeSelected:false, balanceDeferred:false, pendingSettings:null, vote:null, transition:null, rebalanceVote:null, rockets:null, results:null, settings:{...DEFAULT_MATCH_SETTINGS, maxPerTeam:TEAM_SIZE}, state:null, winner:null, lastResult:null, members:[], chat:[], nextQueueOrder:1, lastJoinedAt:0, createdAt:Date.now(), lastActive:Date.now()};
         return this.room;
     }
     canStart() {return this.room.status === 'lobby' && this.room.members.some(member => member.team && member.connected);}
     readyEligible() {return this.room.mode === 'rockets' ? this.voteEligible() : this.room.members.filter(member => member.team && member.connected);}
     allReady() {return this.canStart() && this.readyEligible().every(member => member.ready);}
+    phaseKind() {return this.room.status === 'voting' ? 'mode-selection' : this.room.status === 'results' ? 'leaderboard' : this.room.status === 'playing' ? 'game' : 'lobby';}
     publicRoom() {
         const room = this.ensureRoom(), queue = room.members.filter(member => member.queued).sort((a, b) => a.queueOrder - b.queueOrder);
-        return {id:room.id, name:room.name, hostId:null, status:room.status, mode:room.mode, vote:this.publicVote(room.vote), rebalanceVote:this.publicVote(room.rebalanceVote), rockets:this.publicRockets(), results:room.results, settings:{...room.settings}, pendingSettings:room.pendingSettings ? {...room.pendingSettings} : null, winner:room.winner, lastResult:room.lastResult, allReady:this.allReady(), canStart:this.canStart(), queueLength:queue.length,
+        return {id:room.id, name:room.name, hostId:null, status:room.status, phaseKind:this.phaseKind(), transition:room.transition ? {...room.transition} : null, mode:room.mode, vote:this.publicVote(room.vote), rebalanceVote:this.publicVote(room.rebalanceVote), rockets:this.publicRockets(), results:room.results, settings:{...room.settings}, pendingSettings:room.pendingSettings ? {...room.pendingSettings} : null, winner:room.winner, lastResult:room.lastResult, allReady:this.allReady(), canStart:this.canStart(), queueLength:queue.length,
             members:room.members.map(member => ({id:member.id, slot:member.slot, name:member.name, verified:member.verified, admin:member.admin, host:false, team:member.team, preferredTeam:member.preferredTeam || 0, connected:member.connected, ready:member.ready, queued:member.queued, queueTeam:member.queueTeam, queuePosition:member.queued ? queue.findIndex(item => item.id === member.id) + 1 : null})), state:room.state};
     }
     async fetch(request) {
@@ -170,7 +174,7 @@ export class FootballRoom {
             await this.changed(); return;
         }
         if (message.type === 'modeVote') {
-            if (this.room.status !== 'voting' || !this.room.vote || !['balanced', 'rockets'].includes(message.mode) || !this.voteEligible().some(item => item.id === member.id)) {this.reject(connection, 'There is no eligible mode vote for that choice.'); return;}
+            if (this.room.status !== 'voting' || !this.room.vote || this.room.transition || this.room.vote.resolved || !['balanced', 'rockets'].includes(message.mode) || !this.voteEligible().some(item => item.id === member.id)) {this.reject(connection, 'There is no eligible mode vote for that choice.'); return;}
             if (this.room.vote.deadline <= now) {this.resolveModeVote(); await this.changed(); this.reject(connection, 'That mode vote has ended.'); return;}
             this.room.vote.votes[member.id] = message.mode;
             if (this.voteEligible().every(item => Object.hasOwn(this.room.vote.votes, item.id))) this.resolveModeVote();
@@ -256,8 +260,8 @@ export class FootballRoom {
         member.queued = queued; if (!queued) member.queueOrder = null;
         this.clearInput(member.slot); if (wasActive) this.clearReadiness();
     }
-    promoteQueue() {
-        if (this.room.status === 'playing') return false;
+    promoteQueue(force = false) {
+        if (!force && (['playing', 'results'].includes(this.room.status) || this.room.transition || (this.room.status === 'voting' && this.room.vote?.continuation))) return false;
         const selection = balancedTeamAssignments(this.room.members, TEAM_SIZE), assignments = this.preferredAssignments(selection.assignments);
         let changed = false;
         for (const member of this.room.members) {
@@ -309,7 +313,7 @@ export class FootballRoom {
         next.ni = reset || !previous; this.room.state = next; this.playerLeaves.clear(); return true;
     }
     startMatch() {
-        this.stopTimer(); this.applyPendingSettings(); this.promoteQueue(); this.clearInput(); this.playerLeaves.clear(); this.tickNumber = 0; this.clearReadiness(); this.room.status = 'playing'; this.room.balanceDeferred = false; this.room.winner = null; this.room.vote = null; this.room.results = null; this.room.rebalanceVote = null;
+        this.stopTimer(); this.applyPendingSettings(); this.promoteQueue(true); this.clearInput(); this.playerLeaves.clear(); this.tickNumber = 0; this.clearReadiness(); this.room.status = 'playing'; this.room.balanceDeferred = false; this.room.winner = null; this.room.vote = null; this.room.transition = null; this.room.results = null; this.room.rebalanceVote = null;
         if (this.room.mode === 'rockets') {
             const participants = rocketsRoster(this.room.members);
             this.room.rockets = {participantIds:participants.map(member => member.id), records:{}, completedIds:[], attackerId:null, turnTicksLeft:ROCKET_TURN_TICKS, turnIndex:0, totalTurns:participants.length, turnEnded:false};
@@ -323,16 +327,37 @@ export class FootballRoom {
         const eligible = new Set(this.voteEligible().map(member => member.id)), votes = Object.fromEntries(Object.entries(vote.votes).filter(([id]) => eligible.has(id)));
         const counts = vote.kind === 'mode' ? {balanced:0, rockets:0} : {yes:0, no:0};
         for (const value of Object.values(votes)) counts[vote.kind === 'mode' ? value : value ? 'yes' : 'no']++;
-        return {id:vote.id, deadline:vote.deadline, options:vote.kind === 'mode' ? ['balanced', 'rockets'] : ['yes', 'no'], counts, votes, eligibleCount:eligible.size};
+        return {id:vote.id, deadline:vote.deadline, options:vote.kind === 'mode' ? ['balanced', 'rockets'] : ['yes', 'no'], counts, votes, eligibleCount:eligible.size,
+            ...(vote.kind === 'mode' ? {continuation:Boolean(vote.continuation), resolved:Boolean(vote.resolved), selectedMode:vote.selectedMode || null, winner:vote.winner ?? null, scores:vote.scores?.slice() || null} : {})};
     }
-    openModeVote() {
-        if (!this.voteEligible().length) {this.stopTimer(); this.room.status = 'lobby'; this.room.vote = null; this.room.results = null; this.room.state = null; this.room.rockets = null; this.room.rebalanceVote = null; this.room.winner = null; this.room.modeSelected = false; return;}
-        this.stopTimer(); this.clearInput(); this.clearReadiness(); this.room.status = 'voting'; this.room.state = null; this.room.winner = null; this.room.results = null; this.room.rockets = null; this.room.rebalanceVote = null;
-        this.room.vote = {id:crypto.randomUUID(), kind:'mode', deadline:Date.now() + MODE_VOTE_TTL, votes:{}};
+    openModeVote({continuation = false, result = this.room.lastResult} = {}) {
+        if (continuation) {
+            this.clearInput(); this.clearReadiness(); this.room.status = 'voting'; this.room.results = null; this.room.transition = null; this.room.rebalanceVote = null;
+            this.room.vote = {id:crypto.randomUUID(), kind:'mode', continuation:true, deadline:Date.now() + MODE_VOTE_TTL, votes:{}, winner:result?.winner ?? this.room.winner, scores:result?.scores?.slice() || this.room.state?.scores.slice() || [0, 0, 0, 0]};
+            this.ensureTimer(); return;
+        }
+        if (!this.voteEligible().length) {this.enterLobby({mode:'balanced', modeSelected:false}); return;}
+        this.stopTimer(); this.clearInput(); this.clearReadiness(); this.room.status = 'voting'; this.room.state = null; this.room.winner = null; this.room.results = null; this.room.transition = null; this.room.rockets = null; this.room.rebalanceVote = null;
+        this.room.vote = {id:crypto.randomUUID(), kind:'mode', continuation:false, deadline:Date.now() + MODE_VOTE_TTL, votes:{}};
     }
     resolveModeVote() {
+        if (this.room.transition || this.room.vote?.resolved) return;
         const vote = this.publicVote(this.room.vote); if (!vote) return;
-        this.room.mode = vote.counts.rockets > vote.counts.balanced ? 'rockets' : 'balanced'; this.room.modeSelected = true; this.room.vote = null; this.room.status = 'lobby'; this.room.state = null; this.room.winner = null; this.clearReadiness(); this.promoteQueue(); this.syncLobbyPractice(); this.ensureTimer();
+        const mode = vote.counts.rockets > vote.counts.balanced ? 'rockets' : 'balanced';
+        if (this.room.vote.continuation) {
+            this.room.mode = mode; this.room.modeSelected = true; this.room.vote.resolved = true; this.room.vote.selectedMode = mode;
+            this.room.transition = {kind:this.voteEligible().length ? 'game' : 'lobby', deadline:Date.now() + TRANSITION_TTL, nextMode:mode}; return;
+        }
+        this.enterLobby({mode});
+    }
+    enterLobby({mode = 'balanced', modeSelected = true} = {}) {
+        this.stopTimer(); this.clearInput(); this.clearReadiness(); this.room.status = 'lobby'; this.room.mode = mode; this.room.modeSelected = modeSelected; this.room.vote = null; this.room.transition = null; this.room.results = null; this.room.rockets = null; this.room.rebalanceVote = null; this.room.winner = null; this.room.state = null;
+        this.promoteQueue(); this.syncLobbyPractice(); this.ensureTimer();
+    }
+    completeTransition() {
+        const transition = this.room.transition; if (!transition) return;
+        if (transition.kind === 'game' && this.voteEligible().length) {this.room.mode = transition.nextMode || this.room.mode; this.startMatch();}
+        else this.enterLobby({mode:'balanced'});
     }
     openRebalanceVote() {
         if (!this.room.members.some(member => member.team)) {this.abort('The game is waiting for players.'); this.room.modeSelected = false; return;}
@@ -356,8 +381,9 @@ export class FootballRoom {
         for (const vote of [this.room.vote, this.room.rebalanceVote]) if (vote) {
             const eligible = new Set(this.voteEligible().map(member => member.id)); for (const id of Object.keys(vote.votes)) if (!eligible.has(id)) delete vote.votes[id];
         }
+        if (this.room.transition) return;
         if (!this.voteEligible().length) {
-            if (this.room.status === 'voting') {this.room.status = 'lobby'; this.room.vote = null; this.room.modeSelected = false;}
+            if (this.room.status === 'voting' && !this.room.vote?.continuation) this.enterLobby({mode:'balanced', modeSelected:false});
             this.room.rebalanceVote = null; return;
         }
         if (this.room.status === 'lobby' && !this.room.modeSelected) this.openModeVote();
@@ -411,8 +437,11 @@ export class FootballRoom {
     }
     finishGame(winner) {
         this.room.winner = winner; const board = this.publicRockets()?.leaderboard || [];
-        this.room.results = {mode:this.room.mode, winner, winnerId:this.room.mode === 'rockets' ? board.find(row => row.scored)?.id || null : null, scores:this.room.state?.scores.slice() || [0, 0, 0, 0], leaderboard:board, unit:'m/s', deadline:Date.now() + RESULTS_TTL};
-        this.room.lastResult = {...this.room.results, finishedAt:Date.now()}; this.room.status = 'results'; this.clearInput(); this.clearReadiness(); this.room.rebalanceVote = null; this.ensureTimer(); this.broadcastRoom(); this.background(this.persist()); this.background(this.scheduleAlarm());
+        const result = {mode:this.room.mode, winner, winnerId:this.room.mode === 'rockets' ? board.find(row => row.scored)?.id || null : null, scores:this.room.state?.scores.slice() || [0, 0, 0, 0], leaderboard:board, unit:'m/s', finishedAt:Date.now()};
+        this.room.lastResult = {...result}; this.clearInput(); this.clearReadiness(); this.room.rebalanceVote = null; this.room.transition = null;
+        if (this.room.mode === 'rockets') {this.room.status = 'results'; this.room.vote = null; this.room.results = {...result, deadline:Date.now() + RESULTS_TTL}; this.ensureTimer();}
+        else this.openModeVote({continuation:true, result});
+        this.broadcastRoom(); this.background(this.persist()); this.background(this.scheduleAlarm());
     }
     systemChat(text) {
         const chat = {type:'chat', id:crypto.randomUUID(), memberId:null, name:'Football', text, time:Date.now(), system:true}; this.room.lastActive = Date.now(); this.broadcast(chat);
@@ -445,9 +474,16 @@ export class FootballRoom {
             else if (member.team) this.openRebalanceVote();
         } else if (this.room.status === 'results' && this.room.mode === 'rockets') this.removeRocketParticipant(memberId);
         if (!['playing', 'results'].includes(this.room.status)) this.promoteQueue(); this.updateVoteEligibility(); this.syncLobbyPractice();
-        if (this.canSimulate()) this.ensureTimer(); else this.stopTimer();
+        if (this.canSimulate()) this.ensureTimer();
+        else {
+            this.stopTimer();
+            // With no remaining members there is no next coast step to reap
+            // departed bodies. Public viewers must not retain their discs.
+            if (this.room.state) for (const slot of this.playerLeaves) {this.room.state.players[slot] = null; this.room.state.discs[slot] = null;}
+            this.playerLeaves.clear();
+        }
     }
-    abort(reason) {this.room.status = 'lobby'; this.room.state = null; this.room.winner = null; this.room.vote = null; this.room.results = null; this.room.rockets = null; this.room.rebalanceVote = null; this.clearInput(); this.stopTimer(); this.clearReadiness(); this.promoteQueue(); this.syncLobbyPractice(); this.ensureTimer(); this.broadcast({type:'notice', text:reason});}
+    abort(reason) {this.enterLobby({mode:this.room.mode}); this.broadcast({type:'notice', text:reason});}
     async changed() {this.room.lastActive = Date.now(); this.syncLobbyPractice(); if (this.canSimulate()) this.ensureTimer(); else this.stopTimer(); this.broadcastRoom(); await this.persist(); await this.scheduleAlarm();}
     pruneTickets(now) {for (const [key, ticket] of this.tickets) if (ticket.expires <= now) this.tickets.delete(key);}
     sweep() {
@@ -457,13 +493,14 @@ export class FootballRoom {
         for (const connection of [...this.connections.values()]) if (now - connection.lastMessageAt >= HEARTBEAT_TTL) {try {connection.socket.close(4004, 'Lobby connection timed out.');} catch {} this.disconnect(connection);}
         let changed = false;
         for (const member of [...this.room.members]) if (!member.connected && now >= (member.pendingUntil || (member.disconnectedAt || now) + RESUME_GRACE)) {this.removeMember(member.id, 'Lobby session expired.'); changed = true;}
-        if (this.room.status === 'results' && this.room.results?.deadline <= now) {this.promoteQueue(); this.openModeVote(); changed = true;}
-        if (this.room.status === 'voting' && this.room.vote?.deadline <= now) {if (this.voteEligible().length) this.resolveModeVote(); else {this.room.status = 'lobby'; this.room.vote = null; this.room.modeSelected = false;} changed = true;}
+        if (this.room.transition?.deadline <= now) {this.completeTransition(); changed = true;}
+        if (!this.room.transition && this.room.status === 'results' && this.room.results?.deadline <= now) {this.room.transition = {kind:'lobby', deadline:now + TRANSITION_TTL}; changed = true;}
+        if (!this.room.transition && this.room.status === 'voting' && this.room.vote?.deadline <= now) {if (this.room.vote.continuation || this.voteEligible().length) this.resolveModeVote(); else this.enterLobby({mode:'balanced', modeSelected:false}); changed = true;}
         if (this.room.rebalanceVote?.deadline <= now) {this.resolveRebalanceVote(true); changed = true;}
         if (changed) {this.broadcastRoom(); this.background(this.persist());}
     }
     canSimulate() {
-        return Boolean(this.room?.state && (this.room.status === 'lobby' ? this.room.members.some(member => member.team && member.connected) : this.room.members.length && ['playing', 'results'].includes(this.room.status)));
+        return Boolean(this.room?.state && (this.room.status === 'lobby' ? this.room.members.some(member => member.team && member.connected) : this.room.members.length && (['playing', 'results'].includes(this.room.status) || (this.room.status === 'voting' && this.room.vote?.continuation))));
     }
     ensureTimer() {
         if (!this.timer && this.canSimulate()) {this.lastPumpAt = Date.now(); this.accumulator = 0; this.timer = setInterval(() => this.pump(), STEP_MS);}
@@ -500,7 +537,7 @@ export class FootballRoom {
             catch {this.stopTimer(); return;}
             this.publishFrame(); return;
         }
-        if (this.room.status === 'results') {
+        if (this.room.status === 'results' || (this.room.status === 'voting' && this.room.vote?.continuation)) {
             try {this.room.state = this.physics.step(state, [], {coast:true, playersLeft:[...this.playerLeaves]}); this.playerLeaves.clear();}
             catch {this.stopTimer(); return;}
             this.publishFrame();
@@ -540,7 +577,7 @@ export class FootballRoom {
     publishFrame(roundEnded = false) {
         this.tickNumber++; if (this.connections.size) this.room.lastActive = Date.now();
         if (this.tickNumber % 2 === 0) {
-            const frame = {type:'snapshot', tick:this.tickNumber, serverTime:Date.now(), status:this.room.status, mode:this.room.mode, winner:this.room.winner, rockets:this.publicRockets(), rebalanceVote:this.publicVote(this.room.rebalanceVote), state:this.room.state, inputs:Array.from({length:MAX_MEMBERS}, (_, slot) => this.effectiveInputs[slot] || 0)};
+            const frame = {type:'snapshot', tick:this.tickNumber, serverTime:Date.now(), status:this.room.status, phaseKind:this.phaseKind(), transition:this.room.transition ? {...this.room.transition} : null, mode:this.room.mode, winner:this.room.winner, rockets:this.publicRockets(), rebalanceVote:this.publicVote(this.room.rebalanceVote), state:this.room.state, inputs:Array.from({length:MAX_MEMBERS}, (_, slot) => this.effectiveInputs[slot] || 0)};
             for (const connection of this.connections.values()) {const member = this.room.members.find(item => item.id === connection.memberId); this.send(connection.socket, {...frame, ackSeq:this.sequences[member?.slot] ?? -1});}
             for (const watcher of this.watchers.values()) this.send(watcher.socket, frame);
         }
@@ -548,8 +585,9 @@ export class FootballRoom {
     }
     persist() {this.lastSaved = Date.now(); const saved = this.room ? JSON.parse(JSON.stringify({version:3, room:this.room, tick:this.tickNumber})) : null; this.persistChain = this.persistChain.catch(() => {}).then(() => saved ? this.ctx.storage.put('checkpoint', saved) : this.ctx.storage.delete('checkpoint')); return this.persistChain;}
     async scheduleAlarm() {
-        if (!this.room || (!this.room.members.length && !this.watchers.size && !this.room.chat.length && !this.room.state && !this.room.vote && !this.room.results)) {if (this.ctx.storage.deleteAlarm) await this.ctx.storage.deleteAlarm(); return;}
-        const deadlines = [this.room.lastActive + IDLE_TTL, ...[this.room.vote, this.room.rebalanceVote, this.room.results].filter(Boolean).map(phase => phase.deadline), ...[...this.connections.values(), ...this.watchers.values()].map(connection => connection.lastMessageAt + HEARTBEAT_TTL), ...this.room.members.filter(member => !member.connected).map(member => member.pendingUntil || (member.disconnectedAt || Date.now()) + RESUME_GRACE)];
+        if (!this.room || (!this.room.members.length && !this.watchers.size && !this.room.chat.length && !this.room.state && !this.room.vote && !this.room.results && !this.room.transition)) {if (this.ctx.storage.deleteAlarm) await this.ctx.storage.deleteAlarm(); return;}
+        const phases = this.room.transition ? [this.room.transition] : [this.room.vote, this.room.rebalanceVote, this.room.results].filter(Boolean);
+        const deadlines = [this.room.lastActive + IDLE_TTL, ...phases.map(phase => phase.deadline), ...[...this.connections.values(), ...this.watchers.values()].map(connection => connection.lastMessageAt + HEARTBEAT_TTL), ...this.room.members.filter(member => !member.connected).map(member => member.pendingUntil || (member.disconnectedAt || Date.now()) + RESUME_GRACE)];
         await this.ctx.storage.setAlarm(Math.max(Date.now() + 100, Math.min(...deadlines)));
     }
     async alarm() {await this.ready; this.sweep(); if (this.room) {await this.persist(); await this.scheduleAlarm();}}
@@ -557,8 +595,8 @@ export class FootballRoom {
         this.stopTimer(); for (const connection of this.connections.values()) {try {connection.socket.close(4003, 'Lobby session expired.');} catch {}}
         for (const watcher of this.watchers.values()) {try {watcher.socket.close(4003, 'Live view expired.');} catch {}}
         this.connections.clear(); this.watchers.clear(); this.tickets.clear(); this.clearInput(); this.ensureRoom();
-        this.room.members = []; this.room.chat = []; this.room.state = null; this.room.status = 'lobby'; this.room.winner = null; this.room.vote = null; this.room.modeSelected = false; this.room.results = null; this.room.rockets = null; this.room.rebalanceVote = null; this.room.lastActive = Date.now();
+        this.room.members = []; this.room.chat = []; this.room.state = null; this.room.status = 'lobby'; this.room.winner = null; this.room.vote = null; this.room.transition = null; this.room.modeSelected = false; this.room.results = null; this.room.rockets = null; this.room.rebalanceVote = null; this.room.lastActive = Date.now();
         await this.persist(); if (this.ctx.storage.deleteAlarm) await this.ctx.storage.deleteAlarm();
     }
 }
-export const FOOTBALL_ROOM_LIMITS = Object.freeze({TICKET_TTL, RESUME_GRACE, HEARTBEAT_TTL, IDLE_TTL, MODE_VOTE_TTL, REBALANCE_VOTE_TTL, RESULTS_TTL, MAX_MEMBERS, MAX_WATCHERS, TEAM_SIZE, MESSAGE_LIMIT});
+export const FOOTBALL_ROOM_LIMITS = Object.freeze({TICKET_TTL, RESUME_GRACE, HEARTBEAT_TTL, IDLE_TTL, MODE_VOTE_TTL, REBALANCE_VOTE_TTL, RESULTS_TTL, TRANSITION_TTL, MAX_MEMBERS, MAX_WATCHERS, TEAM_SIZE, MESSAGE_LIMIT});

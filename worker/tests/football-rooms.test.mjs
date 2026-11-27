@@ -86,6 +86,9 @@ async function rocketsMatch(env, count = 2) {
     for (const data of members) await command(room, data, {type:'ready', ready:true});
     room.stopTimer(); assert.equal(room.room.status, 'playing'); assert.equal(room.room.mode, 'rockets'); return {room, members};
 }
+async function finishTransition(room) {
+    assert.ok(room.room.transition); room.room.transition.deadline = Date.now() - 1; await room.alarm(); room.stopTimer();
+}
 
 test('all legacy room links resolve to one shared hub while unsigned and forged guest joins are denied', async () => {
     const env = environment();
@@ -188,16 +191,18 @@ test('queued and spectating arrivals cannot reset active readiness', async () =>
     } finally {cleanup(env);}
 });
 
-test('results transition into voting, then settings clear the old field preview and preserve the result', async () => {
+test('Balanced continuation applies pending settings only when the selected next game starts', async () => {
     const env = environment();
     try {
         const admin = await member(env, 'Admin', await administrator(env)), player = await member(env, 'Player'), room = roomOf(env);
         await command(room, admin, {type:'start'}); room.stopTimer(); room.room.state.fte = 0; room.room.state.scores[2] = 3; room.tick();
         const result = structuredClone(room.room.lastResult);
-        assert.equal(room.room.status, 'results'); room.room.results.deadline = Date.now() - 1; await room.alarm();
+        assert.equal(room.room.status, 'voting'); assert.equal(room.publicRoom().phaseKind, 'mode-selection'); assert.equal(room.publicRoom().vote.continuation, true);
         await command(room, admin, {type:'modeVote', mode:'balanced'}); await command(room, player, {type:'modeVote', mode:'balanced'});
         await command(room, admin, {type:'settings', settings:{pitchWidth:900}});
-        assert.equal(room.room.status, 'lobby'); assert.equal(room.room.state.ftu, -1); assert.equal(room.room.state.settings.pitchWidth, 900); assert.equal(room.room.winner, null); assert.equal(room.room.settings.pitchWidth, 900); assert.deepEqual(room.room.lastResult, result);
+        assert.equal(room.room.status, 'voting'); assert.equal(room.room.transition.kind, 'game'); assert.equal(room.room.settings.pitchWidth, 730); assert.equal(room.room.pendingSettings.pitchWidth, 900);
+        await finishTransition(room);
+        assert.equal(room.room.status, 'playing'); assert.equal(room.room.state.ftu, 120); assert.equal(room.room.state.settings.pitchWidth, 900); assert.equal(room.room.winner, null); assert.equal(room.room.settings.pitchWidth, 900); assert.deepEqual(room.room.lastResult, result);
     } finally {cleanup(env);}
 });
 
@@ -212,26 +217,28 @@ test('live arrivals remain queued through goals and rebalance, then enter only a
         await command(room, members[1], {type:'leave'});
         await command(room, members[0], {type:'rebalanceVote', yes:true}); await command(room, arrival, {type:'rebalanceVote', yes:true});
         assert.equal(roster(room, arrival).team, 0); assert.equal(room.room.state.discs[2] || null, null); assert.equal(room.room.state.scores[2], 1);
-        room.room.state.scores[2] = room.room.settings.scoreLimit; room.room.state.fte = 0; room.tick(); assert.equal(room.room.status, 'results');
-        room.room.results.deadline = Date.now() - 1; await room.alarm();
-        assert.equal(room.room.status, 'voting'); assert.ok(roster(room, arrival).team);
+        room.room.state.scores[2] = room.room.settings.scoreLimit; room.room.state.fte = 0; room.tick(); assert.equal(room.room.status, 'voting');
+        assert.equal(roster(room, arrival).team, 0);
         await command(room, members[0], {type:'modeVote', mode:'balanced'}); await command(room, arrival, {type:'modeVote', mode:'balanced'});
-        await command(room, members[0], {type:'ready', ready:true}); await command(room, arrival, {type:'ready', ready:true}); room.stopTimer();
+        assert.equal(roster(room, arrival).team, 0); assert.equal(room.room.status, 'voting');
+        await finishTransition(room);
         assert.equal(room.room.status, 'playing'); assert.equal(room.room.state.players[2].name, 'Queued');
     } finally {cleanup(env);}
 });
 
-test('winning score resolves before reset and results/voting precede the next ready match', async () => {
+test('winning score resolves before reset and the dedicated vote automatically starts the next match', async () => {
     const env = environment();
     try {
         const {room, members} = await match(env); room.room.settings.scoreLimit = 1;
         room.room.state.ftu = -1; room.room.state.ball.x = 29 / 11; room.room.state.ball.xv = -1; room.tick();
         assert.equal(room.room.state.scores[2], 1); assert.equal(room.room.state.fte, 90);
         for (let i = 0; i < 90; i++) room.tick(); assert.equal(room.room.status, 'playing'); room.tick();
-        assert.equal(room.room.status, 'results'); assert.equal(room.room.winner, 2); const result = structuredClone(room.room.lastResult);
-        room.room.results.deadline = Date.now() - 1; await room.alarm(); assert.equal(room.room.status, 'voting');
+        assert.equal(room.room.status, 'voting'); assert.equal(room.room.winner, 2); const result = structuredClone(room.room.lastResult);
+        assert.deepEqual(room.publicRoom().vote.scores, [0, 0, 1, 0]); assert.equal(room.publicRoom().vote.winner, 2);
         for (const data of members) await command(room, data, {type:'modeVote', mode:'balanced'});
-        await command(room, members[0], {type:'ready', ready:true}); await command(room, members[1], {type:'ready', ready:true}); room.stopTimer();
+        assert.equal(room.room.status, 'voting'); assert.equal(room.publicRoom().vote.resolved, true); assert.equal(room.publicRoom().vote.selectedMode, 'balanced');
+        await command(room, members[0], {type:'ready', ready:true}); assert.equal(room.room.status, 'voting');
+        await finishTransition(room);
         assert.equal(room.room.status, 'playing'); assert.deepEqual(room.room.state.scores, [0, 0, 0, 0]); assert.deepEqual(room.room.lastResult, result);
     } finally {cleanup(env);}
 });
@@ -255,7 +262,7 @@ test('origin, one-use ticket TTL, reconnect rotation and account binding remain 
         assert.equal((await request(env, '/lobby', {displayName:'Evil'}, null, {Origin:'https://evil.test'})).status, 403);
         const identity = {username:'Verified', bonkId:'555'}, first = (await join(env, 'Ignored', {identity})).data;
         assert.equal((await request(env, first.socketPath.replace('/api/football', ''), undefined, null, {Upgrade:'websocket', Origin:'https://evil.test'})).status, 403);
-        const socket = await connect(env, first); socket.close(1001, 'gone'); assert.equal(roomOf(env).inputs[0], 0);
+        const socket = await connect(env, first); socket.close(1001, 'gone'); assert.equal(roomOf(env).inputs[0] || 0, 0);
         assert.equal((await join(env, 'Guest', {identity:null, extra:{resumeToken:first.member.resumeToken}})).response.status, 401);
         const resumed = (await join(env, 'Ignored', {identity, extra:{resumeToken:first.member.resumeToken}})).data; assert.equal(resumed.member.id, first.member.id); assert.notEqual(resumed.member.resumeToken, first.member.resumeToken);
         await connect(env, resumed); assert.equal((await request(env, resumed.socketPath.replace('/api/football', ''), undefined, null, {Upgrade:'websocket'})).status, 403);
@@ -345,11 +352,12 @@ test('empty votes stop and a watcher joining the queue opens a fresh initial vot
     } finally {cleanup(env);}
 });
 
-test('results with no connected participants clear their elapsed deadline and leave no repeating alarm', async () => {
+test('a continuation with no connected participants fades to an idle lobby without restarting', async () => {
     const env = environment();
     try {
         const {room, members} = await match(env, 1); room.finishGame(3);
-        members[0].socket.close(1001, 'gone'); room.room.results.deadline = Date.now() - 1; await room.alarm();
+        members[0].socket.close(1001, 'gone'); room.room.vote.deadline = Date.now() - 1; await room.alarm();
+        assert.equal(room.room.status, 'voting'); assert.equal(room.room.transition.kind, 'lobby'); await finishTransition(room);
         assert.equal(room.room.status, 'lobby'); assert.equal(room.room.results, null); assert.equal(room.room.vote, null); assert.equal(room.room.state, null);
         roster(room, members[0]).disconnectedAt = Date.now() - LIMITS.RESUME_GRACE - 1; await room.alarm();
         assert.equal(room.room.members.length, 0); assert.equal(room.ctx.storage.alarm, null); assert.ok(room.room.lastResult);
@@ -505,7 +513,7 @@ test('Rockets advances 900 active ticks in thirty seconds despite delayed callba
     } finally {cleanup(env);}
 });
 
-test('results coast through the fixed-step pump and publish motion to players and spectators until voting', async () => {
+test('the dedicated continuation vote coasts through its fade and publishes motion without accepting input', async () => {
     const env = environment();
     try {
         const {room, members} = await match(env, 2), watcher = await member(env, 'Watcher');
@@ -517,9 +525,9 @@ test('results coast through the fixed-step pump and publish motion to players an
         room.finishGame(2);
         assert.ok(room.timer, 'finishing keeps the simulation timer running');
         room.stopTimer();
-        const result = structuredClone(room.room.results), lastResult = structuredClone(room.room.lastResult);
+        const lastResult = structuredClone(room.room.lastResult);
         await command(room, members[0], {type:'input', seq:1, flags:18});
-        assert.equal(room.inputs[slot], 0, 'results accept no movement or kick input');
+        assert.equal(room.inputs[slot], 0, 'mode selection accepts no movement or kick input');
         const start = Date.now(); room.lastPumpAt = start; room.accumulator = 0;
         assert.equal(room.pump(start + 100), 3);
         assert.ok(Math.abs(room.room.state.ball.xv - 8 * 0.98 ** 3) < 1e-9);
@@ -527,26 +535,24 @@ test('results coast through the fixed-step pump and publish motion to players an
         assert.ok(room.room.state.ball.x > 22.1);
         assert.equal(room.room.state.fte, 0);
         assert.equal(room.room.state.ftu, -1);
-        assert.equal(room.room.status, 'results');
-        assert.deepEqual(room.room.results, result);
+        assert.equal(room.room.status, 'voting');
+        assert.equal(room.room.results, null);
         assert.deepEqual(room.room.lastResult, lastResult);
         for (const data of [...members, watcher]) {
             const frames = data.socket.received.filter(message => message.type === 'snapshot');
             assert.equal(frames.length, 1);
-            assert.equal(frames[0].status, 'results');
+            assert.equal(frames[0].status, 'voting'); assert.equal(frames[0].phaseKind, 'mode-selection');
             assert.ok(frames[0].state.ball.x > 22.1);
             assert.equal(frames[0].inputs.some(Boolean), false);
         }
-        const frameCount = watcher.socket.received.filter(message => message.type === 'snapshot').length;
-        room.room.results.deadline = Date.now() - 1;
+        room.room.vote.deadline = Date.now() - 1;
         room.pump(start + 200);
         assert.equal(room.room.status, 'voting');
-        assert.equal(room.room.state, null);
-        assert.equal(room.timer, null);
-        assert.equal(watcher.socket.received.filter(message => message.type === 'snapshot').length, frameCount, 'no stale results frame is sent after the deadline');
-        room.tick();
-        assert.equal(room.room.status, 'voting');
-        assert.equal(room.room.state, null);
+        assert.equal(room.room.transition.kind, 'game'); assert.ok(room.room.state.ball.x > 22.1);
+        const vote = structuredClone(room.room.vote);
+        await command(room, members[0], {type:'modeVote', mode:'rockets'}); assert.deepEqual(room.room.vote, vote, 'the selected mode cannot change during its fade');
+        await finishTransition(room);
+        assert.equal(room.room.status, 'playing'); assert.equal(room.room.state.ftu, 120); assert.equal(room.room.vote, null);
     } finally {cleanup(env);}
 });
 
@@ -574,14 +580,14 @@ test('Rockets results motion cannot score again, alter the turn clock, or change
     } finally {cleanup(env);}
 });
 
-test('a restored results checkpoint resumes coasting and stops at its original deadline', async () => {
+test('a restored Rockets leaderboard coasts until its original deadline, then fades directly to balanced lobby', async () => {
     const env = environment();
     let restored;
     try {
-        const {room} = await match(env, 1);
+        const {room} = await rocketsMatch(env, 1);
         room.room.state.ftu = -1; room.room.state.fte = 0; room.room.state.scores[3] = 3;
         Object.assign(room.room.state.ball, {x:30, y:22, xv:12, yv:0});
-        room.finishGame(3); room.stopTimer();
+        room.finishGame(null); room.stopTimer();
         const deadline = room.room.results.deadline, result = structuredClone(room.room.lastResult);
         await room.persist();
         restored = new FootballRoom(context(room.ctx.storage), env);
@@ -597,7 +603,9 @@ test('a restored results checkpoint resumes coasting and stops at its original d
         assert.deepEqual(restored.room.lastResult, result);
         restored.room.results.deadline = Date.now() - 1;
         restored.tick();
-        assert.equal(restored.room.status, 'lobby', 'no connected voters means the results clear into an idle lobby');
+        assert.equal(restored.room.status, 'results'); assert.equal(restored.room.transition.kind, 'lobby');
+        await finishTransition(restored);
+        assert.equal(restored.room.status, 'lobby'); assert.equal(restored.room.mode, 'balanced'); assert.equal(restored.room.modeSelected, true); assert.equal(restored.room.vote, null);
         assert.equal(restored.room.state, null);
         assert.equal(restored.room.results, null);
         assert.equal(restored.timer, null);
@@ -609,8 +617,8 @@ test('a restored results checkpoint resumes coasting and stops at its original d
 test('an empty results room stops its simulation immediately while keeping the scheduled phase deadline', async () => {
     const env = environment();
     try {
-        const {room, members} = await match(env, 1);
-        room.finishGame(3);
+        const {room, members} = await rocketsMatch(env, 1);
+        room.finishGame(null);
         assert.ok(room.timer);
         const deadline = room.room.results.deadline;
         await command(room, members[0], {type:'leave'});
@@ -620,13 +628,98 @@ test('an empty results room stops its simulation immediately while keeping the s
         assert.equal(room.pump(Date.now() + 100), 0);
         room.room.results.deadline = Date.now() - 1;
         await room.alarm();
+        assert.equal(room.room.status, 'results'); assert.equal(room.room.transition.kind, 'lobby'); await finishTransition(room);
         assert.equal(room.room.status, 'lobby');
         assert.equal(room.room.results, null);
         assert.equal(room.room.state, null);
     } finally {cleanup(env);}
 });
 
-test('public live viewers receive game snapshots and results coast without joining or gaining authority', async () => {
+test('Rockets leaderboard returns through a fade to balanced practice with the result retained and Ready required', async () => {
+    const env = environment();
+    try {
+        const {room, members} = await rocketsMatch(env, 2); room.finishGame(null); room.stopTimer();
+        const result = structuredClone(room.room.lastResult), state = room.room.state;
+        assert.equal(room.publicRoom().phaseKind, 'leaderboard');
+        room.room.results.deadline = Date.now() - 1; await room.alarm();
+        assert.equal(room.room.status, 'results'); assert.equal(room.room.state, state); assert.equal(room.room.transition.kind, 'lobby'); assert.equal(room.room.vote, null);
+        await finishTransition(room);
+        assert.equal(room.room.status, 'lobby'); assert.equal(room.room.mode, 'balanced'); assert.equal(room.room.modeSelected, true); assert.equal(room.room.vote, null); assert.equal(room.room.transition, null);
+        assert.equal(room.room.state.ftu, -1); assert.equal(room.room.state.fte, -1); assert.deepEqual(room.room.lastResult, result);
+        assert.ok(members.every(data => roster(room, data).team));
+        await command(room, members[0], {type:'ready', ready:true}); assert.equal(room.room.status, 'lobby');
+        await command(room, members[1], {type:'ready', ready:true}); room.stopTimer(); assert.equal(room.room.status, 'playing'); assert.equal(room.room.mode, 'balanced');
+    } finally {cleanup(env);}
+});
+
+test('a queued arrival during a resolved mode fade enters only when its automatic next game starts', async () => {
+    const env = environment();
+    try {
+        const {room, members} = await match(env, 1); room.finishGame(3); room.stopTimer();
+        await command(room, members[0], {type:'modeVote', mode:'rockets'}); room.stopTimer();
+        const selected = structuredClone(room.room.vote), deadline = room.room.transition.deadline;
+        const arrival = await member(env, 'During fade', null, {vote:false}); room.stopTimer();
+        assert.equal(roster(room, arrival).team, 0); assert.equal(roster(room, arrival).queued, true); assert.equal(room.room.transition.deadline, deadline);
+        await command(room, arrival, {type:'modeVote', mode:'balanced'}); room.resolveModeVote();
+        assert.deepEqual(room.room.vote, selected); assert.equal(room.room.mode, 'rockets');
+        await finishTransition(room);
+        assert.equal(room.room.status, 'playing'); assert.equal(room.room.mode, 'rockets'); assert.deepEqual(room.publicRockets().participantIds, members.concat(arrival).map(data => data.member.id));
+        assert.equal(room.room.state.discs.filter(Boolean).length, 1);
+    } finally {cleanup(env);}
+});
+
+test('saved continuation fades retain their chosen mode and deadline across a reconnect without reopening a vote', async () => {
+    const env = environment(); let restored;
+    try {
+        const {room, members} = await match(env, 1); room.finishGame(3); room.stopTimer();
+        await command(room, members[0], {type:'modeVote', mode:'rockets'}); room.stopTimer();
+        room.room.transition.deadline = Date.now() + 10_000; const transition = {...room.room.transition}, voteId = room.room.vote.id; await room.persist();
+        restored = new FootballRoom(context(room.ctx.storage), env); await restored.ready; restored.stopTimer(); env.objects.set(ID, restored);
+        assert.equal(restored.room.status, 'voting'); assert.deepEqual(restored.room.transition, transition); assert.equal(restored.room.vote.id, voteId); assert.equal(restored.room.vote.resolved, true);
+        const resumed = (await join(env, 'Ignored', {extra:{resumeToken:members[0].member.resumeToken}})).data; await connect(env, resumed); restored.stopTimer();
+        assert.equal(restored.room.vote.id, voteId); assert.deepEqual(restored.room.transition, transition);
+        await finishTransition(restored); assert.equal(restored.room.status, 'playing'); assert.equal(restored.room.mode, 'rockets'); assert.equal(restored.room.vote, null); assert.equal(restored.room.transition, null);
+        restored.tick(); assert.equal(restored.room.state.ftu, 119, 'the completed transition cannot restart the match on its next tick');
+    } finally {restored?.stopTimer(); cleanup(env);}
+});
+
+test('an expired saved game fade with no reconnected players safely returns to balanced lobby', async () => {
+    const env = environment(); let restored;
+    try {
+        const {room, members} = await match(env, 1); room.finishGame(3); room.stopTimer();
+        await command(room, members[0], {type:'modeVote', mode:'rockets'}); room.stopTimer(); room.room.transition.deadline = Date.now() - 1; await room.persist();
+        restored = new FootballRoom(context(room.ctx.storage), env); await restored.ready; env.objects.set(ID, restored);
+        assert.equal(restored.room.status, 'lobby'); assert.equal(restored.room.mode, 'balanced'); assert.equal(restored.room.modeSelected, true); assert.equal(restored.room.vote, null); assert.equal(restored.room.transition, null); assert.equal(restored.room.state, null); assert.equal(restored.timer, null);
+        const resumed = (await join(env, 'Ignored', {extra:{resumeToken:members[0].member.resumeToken}})).data; await connect(env, resumed); restored.stopTimer();
+        assert.equal(restored.room.status, 'lobby'); assert.equal(restored.room.vote, null); assert.equal(restored.room.state.ftu, -1);
+    } finally {restored?.stopTimer(); cleanup(env);}
+});
+
+test('old Balanced results checkpoints recover into a continuation vote while retaining the end state and score', async () => {
+    const env = environment(); let restored;
+    try {
+        const {room} = await match(env, 1); room.room.state.scores[2] = 3; room.room.state.ball.xv = 12; room.finishGame(2); room.stopTimer();
+        const state = structuredClone(room.room.state); room.room.status = 'results'; room.room.results = {...room.room.lastResult, deadline:Date.now() + 5000}; room.room.vote = null; delete room.room.transition; await room.persist();
+        restored = new FootballRoom(context(room.ctx.storage), env); await restored.ready; restored.stopTimer();
+        assert.equal(restored.room.status, 'voting'); assert.equal(restored.room.vote.continuation, true); assert.equal(restored.room.results, null); assert.equal(restored.room.transition, null); assert.deepEqual(restored.room.state, state);
+        assert.equal(restored.publicRoom().vote.winner, 2); assert.deepEqual(restored.publicRoom().vote.scores, [0, 0, 3, 0]);
+        restored.tick(); assert.ok(Math.abs(restored.room.state.ball.xv - 12 * 0.98) < 1e-9);
+    } finally {restored?.stopTimer(); cleanup(env);}
+});
+
+test('the last explicit departure removes its coasting body immediately for public viewers in either end screen', async () => {
+    for (const mode of ['balanced', 'rockets']) {
+        const env = environment();
+        try {
+            const {room, members} = await (mode === 'rockets' ? rocketsMatch(env, 1) : match(env, 1)), viewer = await watch(env), slot = roster(room, members[0]).slot;
+            room.finishGame(mode === 'rockets' ? null : 3); await command(room, members[0], {type:'leave'});
+            assert.equal(room.room.members.length, 0); assert.equal(room.timer, null); assert.equal(room.room.state.discs[slot], null); assert.equal(room.room.state.players[slot], null);
+            const update = viewer.socket.received.filter(message => message.type === 'room').at(-1).room; assert.equal(update.state.discs[slot], null); assert.equal(update.members.length, 0);
+        } finally {cleanup(env);}
+    }
+});
+
+test('public live viewers receive game snapshots and continuation coast without joining or gaining authority', async () => {
     const env = environment();
     try {
         const {room} = await match(env), beforeMembers = room.room.members.length, viewer = await watch(env), beforeActivity = room.room.lastActive;
@@ -634,7 +727,7 @@ test('public live viewers receive game snapshots and results coast without joini
         room.watchMessage(viewer.connection, JSON.stringify({type:'ping', sentAt:123})); assert.equal(viewer.socket.received.at(-1).type, 'pong'); assert.equal(viewer.socket.received.at(-1).sentAt, 123); assert.equal(room.room.lastActive, beforeActivity);
         room.tick(); room.tick(); assert.ok(viewer.socket.received.some(message => message.type === 'snapshot' && message.status === 'playing')); assert.equal(room.room.members.length, beforeMembers);
         room.room.state.ftu = -1; room.room.state.ball.xv = 2; room.finishGame(3); room.stopTimer(); const x = room.room.state.ball.x; room.tick(); room.tick();
-        assert.ok(viewer.socket.received.some(message => message.type === 'snapshot' && message.status === 'results' && message.state.ball.x > x));
+        assert.ok(viewer.socket.received.some(message => message.type === 'snapshot' && message.status === 'voting' && message.phaseKind === 'mode-selection' && message.state.ball.x > x));
         assert.ok(viewer.socket.received.every(message => ['watch', 'room', 'snapshot', 'pong'].includes(message.type)));
     } finally {cleanup(env);}
 });
@@ -906,12 +999,15 @@ test('settings applied during results and voting remain pending until the next g
     const env = environment();
     try {
         const admin = await member(env, 'Admin', await administrator(env)), player = await member(env, 'Player'), room = roomOf(env);
-        await command(room, admin, {type:'start'}); room.stopTimer(); room.finishGame(3); room.stopTimer();
+        await command(room, admin, {type:'start'}); room.stopTimer(); room.finishGame(3); room.stopTimer(); assert.equal(room.room.status, 'voting');
         await command(room, admin, {type:'settings', settings:{ballRadius:1.5}}); room.stopTimer(); assert.equal(room.room.settings.ballRadius, 0.7); assert.equal(room.room.pendingSettings.ballRadius, 1.5);
-        room.room.results.deadline = Date.now() - 1; await room.alarm(); assert.equal(room.room.status, 'voting');
         await command(room, admin, {type:'settings', settings:{playerRadius:1.3}}); assert.equal(room.room.pendingSettings.ballRadius, 1.5); assert.equal(room.room.pendingSettings.playerRadius, 1.3);
-        for (const data of [admin, player]) await command(room, data, {type:'modeVote', mode:'balanced'}); room.stopTimer(); assert.equal(room.room.status, 'lobby'); assert.equal(room.room.settings.ballRadius, 0.7); assert.equal(room.room.pendingSettings.ballRadius, 1.5);
-        for (const data of [admin, player]) await command(room, data, {type:'ready', ready:true}); room.stopTimer(); assert.equal(room.room.status, 'playing'); assert.equal(room.room.pendingSettings, null); assert.equal(room.room.state.settings.ballRadius, 1.5); assert.equal(room.room.state.settings.playerRadius, 1.3);
+        for (const data of [admin, player]) await command(room, data, {type:'modeVote', mode:'rockets'}); room.stopTimer(); assert.equal(room.room.status, 'voting'); assert.equal(room.room.settings.ballRadius, 0.7); assert.equal(room.room.pendingSettings.ballRadius, 1.5);
+        await finishTransition(room); assert.equal(room.room.status, 'playing'); assert.equal(room.room.mode, 'rockets'); assert.equal(room.room.pendingSettings, null); assert.equal(room.room.state.settings.ballRadius, 1.5); assert.equal(room.room.state.settings.playerRadius, 1.3);
+        room.finishGame(null); room.stopTimer(); await command(room, admin, {type:'settings', settings:{pitchWidth:900}}); room.stopTimer();
+        room.room.results.deadline = Date.now() - 1; await room.alarm(); await finishTransition(room);
+        assert.equal(room.room.status, 'lobby'); assert.equal(room.room.mode, 'balanced'); assert.equal(room.room.settings.pitchWidth, 730); assert.equal(room.room.pendingSettings.pitchWidth, 900);
+        for (const data of [admin, player]) await command(room, data, {type:'ready', ready:true}); room.stopTimer(); assert.equal(room.room.status, 'playing'); assert.equal(room.room.settings.pitchWidth, 900); assert.equal(room.room.pendingSettings, null);
     } finally {cleanup(env);}
 });
 
@@ -925,12 +1021,12 @@ test('a pending lower score limit finishes at the goal boundary while old field 
         for (let frame = 0; frame < 90; frame++) room.tick(); const boundary = room.room.state, ball = {...boundary.ball}, discs = structuredClone(boundary.discs);
         assert.equal(boundary.fte, 0); assert.equal(room.room.settings.scoreLimit, 3); assert.equal(getPitchGeometry(boundary).pixels.width, 730);
         room.tick(); room.stopTimer();
-        assert.equal(room.room.status, 'results'); assert.equal(room.room.winner, 2); assert.equal(room.room.pendingSettings, null); assert.equal(room.room.settings.scoreLimit, 2); assert.equal(room.room.settings.pitchWidth, 900);
+        assert.equal(room.room.status, 'voting'); assert.equal(room.room.winner, 2); assert.equal(room.room.pendingSettings, null); assert.equal(room.room.settings.scoreLimit, 2); assert.equal(room.room.settings.pitchWidth, 900);
         assert.equal(room.room.state, boundary); assert.deepEqual(room.room.state.ball, ball); assert.deepEqual(room.room.state.discs, discs); assert.equal(getPitchGeometry(room.room.state).pixels.width, 730); assert.ok(Math.abs(getPitchGeometry(room.room.state).pixels.ballRadius - 7.7) < 1e-9);
         room.tick(); assert.equal(getPitchGeometry(room.room.state).pixels.width, 730); assert.ok(Math.abs(room.room.state.ball.x - ball.x) < 5); assert.notEqual(room.room.state.ball.x, 450 / 11); assert.deepEqual(room.room.state.scores, [0, 0, 2, 0]);
         const acknowledgement = admin.socket.received.filter(message => message.type === 'room').at(-1).room; assert.equal(acknowledgement.settings.pitchWidth, 900); assert.equal(acknowledgement.pendingSettings, null);
-        room.room.results.deadline = Date.now() - 1; await room.alarm(); for (const data of [admin, player]) await command(room, data, {type:'modeVote', mode:'balanced'});
-        for (const data of [admin, player]) await command(room, data, {type:'ready', ready:true}); room.stopTimer(); assert.equal(room.room.status, 'playing'); assert.equal(getPitchGeometry(room.room.state).pixels.width, 900); assert.equal(room.room.state.settings.ballRadius, 1.1); assert.equal(room.room.state.ftu, 120);
+        for (const data of [admin, player]) await command(room, data, {type:'modeVote', mode:'balanced'});
+        await finishTransition(room); assert.equal(room.room.status, 'playing'); assert.equal(getPitchGeometry(room.room.state).pixels.width, 900); assert.equal(room.room.state.settings.ballRadius, 1.1); assert.equal(room.room.state.ftu, 120);
     } finally {cleanup(env);}
 });
 

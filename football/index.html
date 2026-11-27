@@ -8,11 +8,11 @@
         <meta name="description" content="The shared football pitch on Bonk Critic.">
         <title>Football | Bonk Critic</title>
         <link rel="stylesheet" href="../account.css">
-        <link rel="stylesheet" href="./football.css?v=20261127-football-11">
+        <link rel="stylesheet" href="./football.css?v=20261127-football-12">
         <script src="../config.js"></script>
         <script src="../focus.js" defer></script>
         <script src="../skin-renderer.js" defer></script>
-        <script type="module" src="./client.js?v=20261127-football-11"></script>
+        <script type="module" src="./client.js?v=20261127-football-12"></script>
     </head>
     <body>
         <div id="footballApp" class="football-app">
@@ -123,29 +123,29 @@
                                         <p id="readySummary" class="lobby-ready-summary" role="status">Ready up when you want to play.</p>
                                     </section>
 
-                                    <div id="gameOverlay" class="game-overlay" role="region" aria-labelledby="overlayTitle" aria-describedby="overlayDescription" hidden>
-                                        <div class="field-overlay-card" tabindex="-1">
-                                            <div class="overlay-heading"><p class="eyebrow">THE NEXT KICKOFF</p><span id="overlayCountdown" class="overlay-countdown" role="timer" aria-live="off"></span></div>
-                                            <h2 id="overlayTitle">Choose the next game.</h2>
-                                            <p id="overlayDescription" class="overlay-description">Vote for the mode you want to play next.</p>
-                                            <section id="modeVotePanel" class="mode-vote-panel" aria-label="Vote for the next game mode">
-                                                <button type="button" class="mode-vote-button" data-mode-vote="balanced" aria-pressed="false">
-                                                    <span class="mode-vote-heading"><span class="mode-title">Balanced teams</span><span class="vote-tally"><span id="balancedVoteCount">0</span> votes</span></span>
-                                                    <span class="mode-description">Teams scale from 1v1 to 4v4 with the lobby. Solo practice is welcome too.</span>
-                                                    <span class="mode-vote-action">Vote for teams <span aria-hidden="true">→</span></span>
-                                                </button>
-                                                <button type="button" class="mode-vote-button" data-mode-vote="rockets" aria-pressed="false">
-                                                    <span class="mode-vote-heading"><span class="mode-title">Rockets</span><span class="vote-tally"><span id="rocketsVoteCount">0</span> votes</span></span>
-                                                    <span class="mode-description">Take turns shooting for 30 seconds each, in the order you joined.</span>
-                                                    <span class="mode-vote-action">Vote for Rockets <span aria-hidden="true">→</span></span>
-                                                </button>
-                                            </section>
-                                            <section id="resultsPanel" class="results-panel" aria-label="Game results" hidden><p id="resultsSummary" class="results-summary"></p><ol id="rocketLeaderboard" class="rocket-leaderboard" aria-label="Rockets leaderboard"></ol></section>
-                                            <p id="votingWaiting" class="voting-waiting" role="status">Join football to vote for the next game.</p>
-                                        </div>
-                                    </div>
-
                                 </section>
+                            </div>
+
+                            <div id="gameOverlay" class="game-overlay" role="region" aria-labelledby="overlayTitle" aria-describedby="overlayDescription" hidden>
+                                <div class="field-overlay-card" tabindex="-1">
+                                    <div class="overlay-heading"><p class="eyebrow">THE NEXT KICKOFF</p><span id="overlayCountdown" class="overlay-countdown" role="timer" aria-live="off"></span></div>
+                                    <h2 id="overlayTitle">Choose the next game.</h2>
+                                    <p id="overlayDescription" class="overlay-description">Vote for the mode you want to play next.</p>
+                                    <section id="modeVotePanel" class="mode-vote-panel" aria-label="Vote for the next game mode">
+                                        <button type="button" class="mode-vote-button" data-mode-vote="balanced" aria-pressed="false">
+                                            <span class="mode-vote-heading"><span class="mode-title">Balanced teams</span><span class="vote-tally"><span id="balancedVoteCount">0</span> votes</span></span>
+                                            <span class="mode-description">Teams scale from 1v1 to 4v4 with the lobby. Solo practice is welcome too.</span>
+                                            <span class="mode-vote-action">Vote for teams <span aria-hidden="true">→</span></span>
+                                        </button>
+                                        <button type="button" class="mode-vote-button" data-mode-vote="rockets" aria-pressed="false">
+                                            <span class="mode-vote-heading"><span class="mode-title">Rockets</span><span class="vote-tally"><span id="rocketsVoteCount">0</span> votes</span></span>
+                                            <span class="mode-description">Take turns shooting for 30 seconds each, in the order you joined.</span>
+                                            <span class="mode-vote-action">Vote for Rockets <span aria-hidden="true">→</span></span>
+                                        </button>
+                                    </section>
+                                    <section id="resultsPanel" class="results-panel" aria-label="Game results" hidden><p id="resultsSummary" class="results-summary"></p><ol id="rocketLeaderboard" class="rocket-leaderboard" aria-label="Rockets leaderboard"></ol></section>
+                                    <p id="votingWaiting" class="voting-waiting" role="status">Join football to vote for the next game.</p>
+                                </div>
                             </div>
 
                             <div id="rocketsHud" class="rockets-hud" aria-label="Rockets turn" hidden>
