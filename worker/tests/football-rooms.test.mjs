@@ -334,7 +334,7 @@ test('mode voting is server-timed, has one vote per eligible member, and exclude
     } finally {cleanup(env);}
 });
 
-test('a single player may vote and start balanced practice, and timed votes resolve without client timers', async () => {
+test('a single player may vote and start balanced football, and timed votes resolve without client timers', async () => {
     const env = environment();
     try {
         const solo = await member(env, 'Solo', null, {vote:false}), room = roomOf(env); assert.equal(room.room.status, 'voting');
@@ -635,7 +635,7 @@ test('an empty results room stops its simulation immediately while keeping the s
     } finally {cleanup(env);}
 });
 
-test('Rockets leaderboard returns through a fade to balanced practice with the result retained and Ready required', async () => {
+test('Rockets leaderboard returns through a fade to a balanced roster-only lobby with the result retained and Ready required', async () => {
     const env = environment();
     try {
         const {room, members} = await rocketsMatch(env, 2); room.finishGame(null); room.stopTimer();
@@ -645,7 +645,7 @@ test('Rockets leaderboard returns through a fade to balanced practice with the r
         assert.equal(room.room.status, 'results'); assert.equal(room.room.state, state); assert.equal(room.room.transition.kind, 'lobby'); assert.equal(room.room.vote, null);
         await finishTransition(room);
         assert.equal(room.room.status, 'lobby'); assert.equal(room.room.mode, 'balanced'); assert.equal(room.room.modeSelected, true); assert.equal(room.room.vote, null); assert.equal(room.room.transition, null);
-        assert.equal(room.room.state.ftu, -1); assert.equal(room.room.state.fte, -1); assert.deepEqual(room.room.lastResult, result);
+        assert.equal(room.room.state, null); assert.equal(room.timer, null); assert.deepEqual(room.room.lastResult, result);
         assert.ok(members.every(data => roster(room, data).team));
         await command(room, members[0], {type:'ready', ready:true}); assert.equal(room.room.status, 'lobby');
         await command(room, members[1], {type:'ready', ready:true}); room.stopTimer(); assert.equal(room.room.status, 'playing'); assert.equal(room.room.mode, 'balanced');
@@ -691,7 +691,7 @@ test('an expired saved game fade with no reconnected players safely returns to b
         restored = new FootballRoom(context(room.ctx.storage), env); await restored.ready; env.objects.set(ID, restored);
         assert.equal(restored.room.status, 'lobby'); assert.equal(restored.room.mode, 'balanced'); assert.equal(restored.room.modeSelected, true); assert.equal(restored.room.vote, null); assert.equal(restored.room.transition, null); assert.equal(restored.room.state, null); assert.equal(restored.timer, null);
         const resumed = (await join(env, 'Ignored', {extra:{resumeToken:members[0].member.resumeToken}})).data; await connect(env, resumed); restored.stopTimer();
-        assert.equal(restored.room.status, 'lobby'); assert.equal(restored.room.vote, null); assert.equal(restored.room.state.ftu, -1);
+        assert.equal(restored.room.status, 'lobby'); assert.equal(restored.room.vote, null); assert.equal(restored.room.state, null); assert.equal(restored.timer, null);
     } finally {restored?.stopTimer(); cleanup(env);}
 });
 
@@ -922,46 +922,57 @@ test('disconnects cannot turn an expired minority rebalance vote into a winning 
     } finally {cleanup(env);}
 });
 
-test('lobby practice moves and kicks authoritatively without goals or countdowns, then readiness starts a real match', async () => {
+test('lobby team selection grants no bodies or controls until readiness starts a real match', async () => {
     const env = environment();
     try {
         const first = await member(env, 'First'), second = await member(env, 'Second'), spectator = await member(env, 'Spectator'), room = roomOf(env);
-        await command(room, spectator, {type:'team', team:0}); room.stopTimer(); const slot = roster(room, first).slot, spectatorSlot = roster(room, spectator).slot;
-        assert.equal(room.room.status, 'lobby'); assert.equal(room.room.state.ftu, -1); assert.equal(room.room.state.fte, -1);
-        const x = room.room.state.discs[slot].x;
-        await command(room, first, {type:'input', seq:1, flags:1}); await command(room, spectator, {type:'input', seq:1, flags:31}); room.tick(); room.tick();
-        assert.ok(room.room.state.discs[slot].x < x); assert.equal(room.inputs[spectatorSlot], 0); assert.equal(room.room.state.discs[spectatorSlot] || null, null);
-        const disc = room.room.state.discs[slot]; Object.assign(room.room.state.ball, {x:disc.x + 2.1, y:disc.y, xv:0, yv:0});
-        await command(room, first, {type:'input', seq:2, flags:16}); await command(room, first, {type:'input', seq:3, flags:0}); room.tick(); assert.ok(room.room.state.ball.xv > 24);
-        Object.assign(room.room.state.ball, {x:701 / 11, y:250 / 11, xv:20, yv:0}); room.tick();
-        assert.deepEqual(room.room.state.scores, [0, 0, 0, 0]); assert.equal(room.room.state.ftu, -1); assert.equal(room.room.state.fte, -1); assert.equal(room.room.winner, null); assert.equal(room.room.status, 'lobby'); assert.equal(room.room.state.sts.some(sound => sound.i === 'footGoal'), false);
-        assert.ok(first.socket.received.some(message => message.type === 'snapshot' && message.status === 'lobby'));
-        await command(room, first, {type:'ready', ready:true}); room.stopTimer(); room.tick(); assert.equal(roster(room, first).ready, true); assert.equal(roster(room, second).ready, false); assert.equal(room.room.status, 'lobby');
-        await command(room, second, {type:'ready', ready:true}); room.stopTimer(); assert.equal(room.room.status, 'playing'); assert.equal(room.room.state.ftu, 120); assert.deepEqual(room.room.state.scores, [0, 0, 0, 0]);
+        await command(room, spectator, {type:'team', team:0}); const slot = roster(room, first).slot, spectatorSlot = roster(room, spectator).slot;
+        assert.equal(room.room.status, 'lobby'); assert.equal(room.room.state, null); assert.equal(room.timer, null); assert.ok(roster(room, first).team);
+        const step = room.physics.step; room.physics.step = () => assert.fail('lobby actions must never run physics');
+        await command(room, first, {type:'input', seq:1, flags:31}); await command(room, spectator, {type:'input', seq:1, flags:31}); room.tick(); room.tick(); assert.equal(room.pump(Date.now() + 200), 0);
+        assert.equal(room.inputs[slot], 0); assert.equal(room.inputs[spectatorSlot], 0); assert.equal(room.pendingHeavy[slot] || false, false); assert.equal(room.room.state, null); assert.equal(room.timer, null);
+        assert.equal(first.socket.received.some(message => message.type === 'snapshot'), false);
+        await command(room, first, {type:'ready', ready:true}); room.tick(); assert.equal(roster(room, first).ready, true); assert.equal(roster(room, second).ready, false); assert.equal(room.room.status, 'lobby'); assert.equal(room.room.state, null);
+        room.physics.step = step;
+        await command(room, second, {type:'ready', ready:true}); assert.ok(room.timer); room.stopTimer(); assert.equal(room.room.status, 'playing'); assert.equal(room.room.state.ftu, 120); assert.deepEqual(room.room.state.scores, [0, 0, 0, 0]);
+        assert.equal(room.room.state.discs.filter(Boolean).length, 2); assert.equal(room.room.state.discs[spectatorSlot] || null, null); assert.equal(room.inputs[slot] || 0, 0);
+        room.room.state.ftu = -1; const x = room.room.state.discs[slot].x; await command(room, first, {type:'input', seq:2, flags:2}); room.tick(); assert.ok(room.room.state.discs[slot].x > x);
     } finally {cleanup(env);}
 });
 
-test('lobby roster changes preserve the ball and existing discs while spawning new members and removing departed slots', async () => {
+test('lobby roster changes update teams and reused slots without spawning a field until the game starts', async () => {
     const env = environment();
     try {
-        const first = await member(env, 'First'), room = roomOf(env); room.stopTimer(); const slot = roster(room, first).slot;
-        Object.assign(room.room.state.ball, {x:30, y:20, xv:2, yv:1}); Object.assign(room.room.state.discs[slot], {x:20, y:20, xv:3, yv:-2});
-        const ball = {...room.room.state.ball}, disc = {...room.room.state.discs[slot]}, second = await member(env, 'Second'); room.stopTimer();
-        assert.deepEqual(room.room.state.ball, ball); assert.deepEqual(room.room.state.discs[slot], disc);
-        const oldSlot = roster(room, second).slot; room.room.state.discs[oldSlot].x = 42;
-        await command(room, second, {type:'leave'}); room.stopTimer(); assert.deepEqual(room.room.state.ball, ball); assert.deepEqual(room.room.state.discs[slot], disc); assert.equal(room.room.state.discs[oldSlot] || null, null);
-        const third = await member(env, 'Third'); room.stopTimer(); assert.equal(roster(room, third).slot, oldSlot); assert.notEqual(room.room.state.discs[oldSlot].x, 42); assert.deepEqual(room.room.state.ball, ball); assert.deepEqual(room.room.state.discs[slot], disc);
+        const first = await member(env, 'First'), second = await member(env, 'Second'), room = roomOf(env), slot = roster(room, second).slot;
+        await command(room, first, {type:'team', team:2}); assert.equal(roster(room, first).preferredTeam, 2); assert.equal(room.room.state, null); assert.equal(room.timer, null);
+        await command(room, second, {type:'leave'}); const third = await member(env, 'Third'); assert.equal(roster(room, third).slot, slot); assert.equal(room.room.state, null); assert.equal(room.timer, null);
+        await command(room, first, {type:'ready', ready:true}); await command(room, third, {type:'ready', ready:true}); room.stopTimer();
+        assert.equal(room.room.status, 'playing'); assert.equal(room.room.state.players[slot].name, 'Third'); assert.equal(room.room.state.discs.filter(Boolean).length, 2);
     } finally {cleanup(env);}
 });
 
-test('admin Apply updates lobby practice immediately and rebuilds its field without adding a kickoff freeze', async () => {
+test('admin Apply updates lobby configuration immediately but creates no field until Start', async () => {
     const env = environment();
     try {
         const admin = await member(env, 'Admin', await administrator(env)), room = roomOf(env);
-        await command(room, admin, {type:'settings', settings:{pitchWidth:900, moveForce:0, ballRadius:1.1}}); room.stopTimer();
-        assert.equal(room.room.settings.pitchWidth, 900); assert.equal(room.room.pendingSettings, null); assert.equal(room.room.state.settings.pitchWidth, 900); assert.equal(room.room.state.ftu, -1); assert.equal(room.room.state.ball.x, 450 / 11);
-        const slot = roster(room, admin).slot, x = room.room.state.discs[slot].x; await command(room, admin, {type:'input', seq:1, flags:1}); room.tick(); assert.equal(room.room.state.discs[slot].x, x);
+        await command(room, admin, {type:'settings', settings:{pitchWidth:900, moveForce:0, ballRadius:1.1}});
+        assert.equal(room.room.settings.pitchWidth, 900); assert.equal(room.room.pendingSettings, null); assert.equal(room.room.state, null); assert.equal(room.publicRoom().state, null); assert.equal(room.timer, null);
+        await command(room, admin, {type:'start'}); assert.ok(room.timer); room.stopTimer();
+        assert.equal(room.room.state.settings.pitchWidth, 900); assert.equal(room.room.state.settings.ballRadius, 1.1); assert.equal(room.room.state.ftu, 120); assert.equal(room.room.state.ball.x, 450 / 11);
+        const slot = roster(room, admin).slot, x = room.room.state.discs[slot].x; room.room.state.ftu = -1; await command(room, admin, {type:'input', seq:1, flags:1}); room.tick(); assert.equal(room.room.state.discs[slot].x, x);
     } finally {cleanup(env);}
+});
+
+test('legacy lobby-practice checkpoints discard old bodies on restore and remain roster-only after reconnect', async () => {
+    const env = environment(); let restored;
+    try {
+        const {room, members} = await match(env, 1); room.room.status = 'lobby'; room.room.state.ftu = -1; await room.persist();
+        restored = new FootballRoom(context(room.ctx.storage), env); await restored.ready; env.objects.set(ID, restored);
+        assert.equal(restored.room.status, 'lobby'); assert.equal(restored.room.state, null); assert.equal(restored.canSimulate(), false); assert.equal(restored.timer, null);
+        const resumed = (await join(env, 'Ignored', {extra:{resumeToken:members[0].member.resumeToken}})).data; const socket = await connect(env, resumed);
+        await command(restored, resumed, {type:'input', seq:1, flags:31}); restored.tick();
+        assert.equal(restored.room.state, null); assert.equal(restored.timer, null); assert.equal(restored.inputs[roster(restored, resumed).slot], 0); assert.equal(socket.received[0].room.state, null);
+    } finally {restored?.stopTimer(); cleanup(env);}
 });
 
 test('pending admin settings compose atomically and apply at the next goal kickoff, with an immediate public acknowledgement', async () => {

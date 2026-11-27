@@ -34,7 +34,8 @@ export class FootballRoom {
             if (this.room.rockets && ![2, 3].includes(this.room.rockets.attackerTeam)) this.room.rockets.attackerTeam = this.room.members.find(member => member.id === this.room.rockets.attackerId)?.team || 3;
             this.room.lastJoinedAt = Math.max(this.room.lastJoinedAt || 0, joinedAt);
             if (Date.now() - this.room.lastActive >= IDLE_TTL) {await this.clearIdle(); return;}
-            this.sweep(); this.syncLobbyPractice(); this.ensureTimer(); await this.scheduleAlarm();
+            if (this.room.status === 'lobby') this.room.state = null;
+            this.sweep(); this.ensureTimer(); await this.scheduleAlarm();
         });
     }
     ensureRoom() {
@@ -145,7 +146,6 @@ export class FootballRoom {
         server.addEventListener('close', () => this.disconnect(connection)); server.addEventListener('error', () => this.disconnect(connection));
         this.room.lastActive = Date.now(); if (!['playing', 'results'].includes(this.room.status)) this.promoteQueue();
         if (!this.room.modeSelected && this.room.status === 'lobby') this.openModeVote();
-        this.syncLobbyPractice();
         this.send(server, {type:'welcome', memberId:member.id, room:this.publicRoom()}); this.broadcastRoom(); this.ensureTimer(); this.background(this.persist()); this.background(this.scheduleAlarm());
         return new Response(null, {status:101, webSocket:client});
     }
@@ -189,7 +189,7 @@ export class FootballRoom {
         if (message.type === 'input') {
             if (!Number.isSafeInteger(message.seq) || message.seq < 0 || message.seq > 2147483647 || !Number.isInteger(message.flags) || message.flags < 0 || message.flags > 63) {this.reject(connection, 'Invalid controls.'); return;}
             if (message.seq <= (this.sequences[member.slot] ?? -1)) return;
-            const playable = ['lobby', 'playing'].includes(this.room.status) && member.team, flags = playable ? message.flags & 31 : 0, previous = this.inputs[member.slot] || 0;
+            const playable = this.room.status === 'playing' && member.team, flags = playable ? message.flags & 31 : 0, previous = this.inputs[member.slot] || 0;
             if (this.room.state?.ftu === -1 && playable && (flags & 16) && !(previous & 16)) this.pendingHeavy[member.slot] = true;
             else if (!playable || this.room.state?.ftu !== -1) this.pendingHeavy[member.slot] = false;
             this.sequences[member.slot] = message.seq; this.inputs[member.slot] = flags; this.inputTimes[member.slot] = now; this.room.lastActive = now; return;
@@ -230,7 +230,7 @@ export class FootballRoom {
         if (message.type === 'settings') {
             const patch = message.settings ?? (Object.hasOwn(message, 'scoreLimit') ? {scoreLimit:message.scoreLimit} : null), result = validateMatchSettings(patch, this.room.pendingSettings || this.room.settings);
             if (result.error) {this.reject(connection, result.error); return;}
-            if (this.room.status === 'lobby') {this.room.settings = {...result.settings, maxPerTeam:TEAM_SIZE}; this.room.pendingSettings = null; this.clearReadiness(); this.syncLobbyPractice(true);}
+            if (this.room.status === 'lobby') {this.room.settings = {...result.settings, maxPerTeam:TEAM_SIZE}; this.room.pendingSettings = null; this.clearReadiness();}
             else this.room.pendingSettings = {...result.settings};
         } else if (message.type === 'assign') {
             const target = this.room.members.find(item => item.id === message.memberId);
@@ -299,19 +299,6 @@ export class FootballRoom {
         if (result.error) {this.room.pendingSettings = null; return false;}
         this.room.settings = {...result.settings, maxPerTeam:TEAM_SIZE}; this.room.pendingSettings = null; return true;
     }
-    syncLobbyPractice(reset = false) {
-        if (this.room?.status !== 'lobby') return false;
-        const previous = this.room.state, players = this.activePlayers();
-        if (!players.some(Boolean)) {this.room.state = null; this.playerLeaves.clear(); this.clearInput(); return Boolean(previous);}
-        const settings = this.matchSettings(), next = createState(players, {settings, kickoffTicks:-1});
-        const compatible = previous && JSON.stringify(validateMatchSettings({}, previous.settings || DEFAULT_MATCH_SETTINGS).settings) === JSON.stringify(settings);
-        if (!reset && compatible && JSON.stringify(previous.players) === JSON.stringify(next.players)) return false;
-        if (!reset && compatible) {
-            next.ball = {...previous.ball};
-            next.discs.forEach((disc, slot) => {if (disc && previous.discs[slot] && !this.playerLeaves.has(slot)) next.discs[slot] = {...previous.discs[slot], team:disc.team};});
-        }
-        next.ni = reset || !previous; this.room.state = next; this.playerLeaves.clear(); return true;
-    }
     startMatch() {
         this.stopTimer(); this.applyPendingSettings(); this.promoteQueue(true); this.clearInput(); this.playerLeaves.clear(); this.tickNumber = 0; this.clearReadiness(); this.room.status = 'playing'; this.room.balanceDeferred = false; this.room.winner = null; this.room.vote = null; this.room.transition = null; this.room.results = null; this.room.rebalanceVote = null;
         if (this.room.mode === 'rockets') {
@@ -352,7 +339,7 @@ export class FootballRoom {
     }
     enterLobby({mode = 'balanced', modeSelected = true} = {}) {
         this.stopTimer(); this.clearInput(); this.clearReadiness(); this.room.status = 'lobby'; this.room.mode = mode; this.room.modeSelected = modeSelected; this.room.vote = null; this.room.transition = null; this.room.results = null; this.room.rockets = null; this.room.rebalanceVote = null; this.room.winner = null; this.room.state = null;
-        this.promoteQueue(); this.syncLobbyPractice(); this.ensureTimer();
+        this.promoteQueue();
     }
     completeTransition() {
         const transition = this.room.transition; if (!transition) return;
@@ -459,7 +446,7 @@ export class FootballRoom {
             this.setQueue(member, true, 0); this.removeRocketParticipant(member.id);
         } else if (member.team) this.clearReadiness();
         this.updateVoteEligibility();
-        this.syncLobbyPractice(); if (!this.canSimulate()) this.stopTimer();
+        if (!this.canSimulate()) this.stopTimer();
         this.broadcastRoom(); this.background(this.persist()); this.background(this.scheduleAlarm());
     }
     removeMember(memberId, reason) {
@@ -473,7 +460,7 @@ export class FootballRoom {
             if (this.room.mode === 'rockets') this.removeRocketParticipant(memberId);
             else if (member.team) this.openRebalanceVote();
         } else if (this.room.status === 'results' && this.room.mode === 'rockets') this.removeRocketParticipant(memberId);
-        if (!['playing', 'results'].includes(this.room.status)) this.promoteQueue(); this.updateVoteEligibility(); this.syncLobbyPractice();
+        if (!['playing', 'results'].includes(this.room.status)) this.promoteQueue(); this.updateVoteEligibility();
         if (this.canSimulate()) this.ensureTimer();
         else {
             this.stopTimer();
@@ -484,7 +471,7 @@ export class FootballRoom {
         }
     }
     abort(reason) {this.enterLobby({mode:this.room.mode}); this.broadcast({type:'notice', text:reason});}
-    async changed() {this.room.lastActive = Date.now(); this.syncLobbyPractice(); if (this.canSimulate()) this.ensureTimer(); else this.stopTimer(); this.broadcastRoom(); await this.persist(); await this.scheduleAlarm();}
+    async changed() {this.room.lastActive = Date.now(); if (this.canSimulate()) this.ensureTimer(); else this.stopTimer(); this.broadcastRoom(); await this.persist(); await this.scheduleAlarm();}
     pruneTickets(now) {for (const [key, ticket] of this.tickets) if (ticket.expires <= now) this.tickets.delete(key);}
     sweep() {
         if (!this.room) return; const now = Date.now(); this.pruneTickets(now);
@@ -500,7 +487,7 @@ export class FootballRoom {
         if (changed) {this.broadcastRoom(); this.background(this.persist());}
     }
     canSimulate() {
-        return Boolean(this.room?.state && (this.room.status === 'lobby' ? this.room.members.some(member => member.team && member.connected) : this.room.members.length && (['playing', 'results'].includes(this.room.status) || (this.room.status === 'voting' && this.room.vote?.continuation))));
+        return Boolean(this.room?.state && this.room.members.length && (['playing', 'results'].includes(this.room.status) || (this.room.status === 'voting' && this.room.vote?.continuation)));
     }
     ensureTimer() {
         if (!this.timer && this.canSimulate()) {this.lastPumpAt = Date.now(); this.accumulator = 0; this.timer = setInterval(() => this.pump(), STEP_MS);}
@@ -532,11 +519,6 @@ export class FootballRoom {
     tick() {
         this.sweep(); if (!this.canSimulate()) {this.stopTimer(); return;}
         const state = this.room.state;
-        if (this.room.status === 'lobby') {
-            try {this.room.state = this.physics.step(state, this.physicsControls(state), {practice:true, playersLeft:[...this.playerLeaves]}); this.playerLeaves.clear();}
-            catch {this.stopTimer(); return;}
-            this.publishFrame(); return;
-        }
         if (this.room.status === 'results' || (this.room.status === 'voting' && this.room.vote?.continuation)) {
             try {this.room.state = this.physics.step(state, [], {coast:true, playersLeft:[...this.playerLeaves]}); this.playerLeaves.clear();}
             catch {this.stopTimer(); return;}

@@ -3120,6 +3120,114 @@ kbd {
     font-size: 10px;
 }
 
+.settings-fields > .setting-field {
+    grid-template-columns: minmax(74px, .8fr) minmax(0, 1.4fr);
+    align-items: center;
+    gap: 5px 9px;
+}
+
+.setting-field .setting-label {
+    font-size: 11px;
+}
+
+.setting-field .setting-hint {
+    grid-column: 1 / -1;
+    font-size: 10px;
+}
+
+.setting-field .setting-input-row {
+    justify-content: flex-end;
+    gap: 7px;
+}
+
+.setting-field .setting-input-row input[type="number"] {
+    flex: 0 1 74px;
+    width: 74px;
+    min-width: 46px;
+    min-height: 30px;
+    padding: 5px 6px;
+}
+
+.setting-field .setting-input-row input[type="range"] {
+    appearance: none;
+    -webkit-appearance: none;
+    flex: 1 1 70px;
+    width: 70px;
+    min-width: 32px;
+    min-height: 26px;
+    height: 26px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    outline: 0;
+    background: transparent;
+    accent-color: var(--green);
+    cursor: pointer;
+}
+
+.setting-field input[type="range"]::-webkit-slider-runnable-track {
+    height: 5px;
+    border: 1px solid #a4ad8b;
+    border-radius: 6px;
+    background: #d5dcc1;
+}
+
+.setting-field input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    margin-top: -5px;
+    border: 2px solid var(--ink);
+    border-radius: 50%;
+    background: var(--green);
+}
+
+.setting-field input[type="range"]::-moz-range-track {
+    height: 4px;
+    border: 1px solid #a4ad8b;
+    border-radius: 6px;
+    background: #d5dcc1;
+}
+
+.setting-field input[type="range"]::-moz-range-thumb {
+    width: 11px;
+    height: 11px;
+    border: 2px solid var(--ink);
+    border-radius: 50%;
+    background: var(--green);
+}
+
+.setting-value {
+    flex: 0 0 auto;
+    min-width: 32px;
+    color: #526744;
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    white-space: nowrap;
+}
+
+.setting-field .setting-reset {
+    display: grid;
+    place-items: center;
+    width: 27px;
+    min-width: 27px;
+    height: 27px;
+    min-height: 27px;
+    padding: 4px;
+    border-width: 1px;
+    border-radius: 50%;
+    box-shadow: none;
+}
+
+.setting-reset svg {
+    width: 16px;
+    height: 16px;
+    pointer-events: none;
+}
+
 .page-heading-actions {
     align-self: flex-end;
 }

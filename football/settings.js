@@ -10,13 +10,20 @@ export const DEFAULT_MATCH_SETTINGS = Object.freeze({
     pitchHeight: 500,
 });
 
+export function goalHeightLimit(settings = DEFAULT_MATCH_SETTINGS) {
+    const height = Number.isFinite(settings?.pitchHeight) ? settings.pitchHeight : DEFAULT_MATCH_SETTINGS.pitchHeight;
+    return Math.max(0, (height - 150) / 11);
+}
+
+const MAX_GOAL_HEIGHT = goalHeightLimit({pitchHeight: 1000});
+
 export const SETTING_RULES = Object.freeze({
     scoreLimit: Object.freeze({label: 'First to', min: 1, max: 9, step: 1, unit: 'goals'}),
-    goalHeight: Object.freeze({label: 'Goal opening', min: 1, max: 40, step: 0.5, unit: 'm', disabledValue: -1}),
+    goalHeight: Object.freeze({label: 'Goal height', min: -MAX_GOAL_HEIGHT, max: MAX_GOAL_HEIGHT, step: 0.1, unit: 'm'}),
     kickImpulse: Object.freeze({label: 'Kick strength', min: 0, max: 60, step: 0.5, unit: 'N·s'}),
-    moveForce: Object.freeze({label: 'Movement force', min: 0, max: 128, step: 1, unit: 'N'}),
-    ballRadius: Object.freeze({label: 'Ball radius', min: 0.2, max: 3, step: 0.05, unit: 'm'}),
-    playerRadius: Object.freeze({label: 'Player radius', min: 0.2, max: 3, step: 0.05, unit: 'm'}),
+    moveForce: Object.freeze({label: 'Movement speed', min: -128, max: 128, step: 1, unit: 'N'}),
+    ballRadius: Object.freeze({label: 'Ball radius', min: 0.2, max: 3, step: 0.1, unit: 'm'}),
+    playerRadius: Object.freeze({label: 'Player radius', min: 0.2, max: 3, step: 0.1, unit: 'm'}),
     pitchWidth: Object.freeze({label: 'Pitch width', min: 400, max: 1460, step: 10, unit: 'px'}),
     pitchHeight: Object.freeze({label: 'Pitch height', min: 300, max: 1000, step: 10, unit: 'px'}),
 });
@@ -45,9 +52,8 @@ export function validateMatchSettings(patch, current = DEFAULT_MATCH_SETTINGS) {
         if (key === 'scoreLimit' && !Number.isInteger(value)) {
             return {settings: null, error: 'First to must be a whole number from 1 to 9.'};
         }
-        if (value !== rule.disabledValue && (value < rule.min || value > rule.max)) {
-            const disabled = rule.disabledValue === undefined ? '' : `, or ${rule.disabledValue} to close the goals`;
-            return {settings: null, error: `${rule.label} must be between ${rule.min} and ${rule.max}${disabled}.`};
+        if (value < rule.min || value > rule.max) {
+            return {settings: null, error: `${rule.label} must be between ${rule.min} and ${rule.max}.`};
         }
     }
     const ppm = 11;
@@ -56,10 +62,8 @@ export function validateMatchSettings(patch, current = DEFAULT_MATCH_SETTINGS) {
     if (2 * Math.max(settings.ballRadius, settings.playerRadius) >= Math.min(innerWidth, innerHeight)) {
         return {settings: null, error: 'The ball and players must fit inside the pitch.'};
     }
-    // Leave at least one display pixel of wall above and below each opening,
-    // so side-wall polygons cannot collapse into zero-area fixtures.
-    if (settings.goalHeight !== -1 && settings.goalHeight > innerHeight - 2 / ppm) {
-        return {settings: null, error: 'The goal opening must fit inside the pitch height. Reduce the opening or increase the pitch height.'};
+    if (Math.abs(settings.goalHeight) > goalHeightLimit(settings) + 1e-9) {
+        return {settings: null, error: 'The absolute goal height must fit inside the playable pitch height. Reduce it or increase the pitch height.'};
     }
     return {settings, error: null};
 }

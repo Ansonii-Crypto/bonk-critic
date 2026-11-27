@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import test from 'node:test';
 import {FootballPhysics, FOOTBALL_CONSTANTS as C, createState, getPitchGeometry} from '../../football/physics.js';
-import {DEFAULT_MATCH_SETTINGS, SETTING_RULES, validateMatchSettings} from '../../football/settings.js';
+import {DEFAULT_MATCH_SETTINGS, SETTING_RULES, validateMatchSettings, goalHeightLimit} from '../../football/settings.js';
 
 const players = [{id: 0, team: 3, name: 'Blue'}, {id: 1, team: 2, name: 'Red'}];
 const approximately = (actual, expected, tolerance = 1e-9) => {
@@ -25,16 +25,16 @@ test('lobby practice accepts movement and kicks without kickoff freezes, goals o
     assert.equal(throughGoal.sts.some(sound => sound.i === 'footGoal'), false);
 });
 
-test('lobby practice keeps a ball shot through a goal reachable and players can use the full canvas', () => {
+test('legacy practice ball recovery does not reintroduce fixed player bounds', () => {
     const physics = new FootballPhysics(); let state = active([players[0]]);
     Object.assign(state.ball, {x: 0.1, y: 250 / C.PPM, xv: -30, yv: 0});
     Object.assign(state.discs[0], {x: 0.5, y: 1.1, xv: -5, yv: -5});
     state = physics.step(state, [{left: true, up: true}], {practice: true});
     assert.equal(state.ball.x, C.BALL_RADIUS); assert.ok(state.ball.xv > 0);
-    assert.equal(state.discs[0].x, C.PLAYER_RADIUS); assert.equal(state.discs[0].y, C.PLAYER_RADIUS);
+    assert.ok(state.discs[0].x < 0.5); assert.ok(state.discs[0].y < 1.1);
     for (let index = 0; index < 600; index++) state = physics.step(state, [{right: true, down: true}], {practice: true});
-    assert.equal(state.discs[0].x, C.WIDTH / C.PPM - C.PLAYER_RADIUS);
-    assert.equal(state.discs[0].y, C.HEIGHT / C.PPM - C.PLAYER_RADIUS);
+    assert.ok(state.discs[0].x > C.WIDTH / C.PPM);
+    assert.ok(state.discs[0].y > C.HEIGHT / C.PPM);
     assert.ok(state.ball.x >= C.BALL_RADIUS && state.ball.x <= C.WIDTH / C.PPM - C.BALL_RADIUS);
     assert.deepEqual(state.scores, [0, 0, 0, 0]);
 });
@@ -268,7 +268,7 @@ test('match settings validate finite numeric patches atomically and preserve cur
     }
 });
 
-test('match setting bounds, score integers, disabled goals, and dependent geometry are checked', () => {
+test('match setting bounds, score integers, signed goals, and dependent geometry are checked', () => {
     for (const [key, rule] of Object.entries(SETTING_RULES)) {
         assert.equal(typeof rule.label, 'string');
         assert.equal(typeof rule.unit, 'string');
@@ -278,7 +278,7 @@ test('match setting bounds, score integers, disabled goals, and dependent geomet
         }
     }
     assert.ok(validateMatchSettings({scoreLimit: 2.5}).error);
-    for (const goalHeight of [-2, -0.5, 0, 0.5]) assert.ok(validateMatchSettings({goalHeight}).error);
+    for (const goalHeight of [-2, -0.5, 0, 0.5]) assert.equal(validateMatchSettings({goalHeight}).error, null);
     assert.equal(validateMatchSettings({goalHeight: -1}).error, null);
     assert.ok(validateMatchSettings({goalHeight: 40}).error, 'opening cannot exceed the current inner height');
     assert.equal(validateMatchSettings({goalHeight: 40, pitchHeight: 700}).error, null);
@@ -321,7 +321,7 @@ test('custom ball and player radii change real Box2D wall and post contacts', ()
     assert.ok(next.discs[0].xv > 0, 'larger player meets the circular post sooner');
 });
 
-test('custom pitch dimensions set geometry, proportional spawns, player clamps, and goal boundaries', () => {
+test('custom pitch dimensions set geometry, proportional spawns and goals without a fixed player clamp', () => {
     const physics = new FootballPhysics();
     const settings = {pitchWidth: 1000, pitchHeight: 700, goalHeight: 18, playerRadius: 1.5};
     const state = createState(players, {settings, kickoffTicks: -1});
@@ -339,16 +339,16 @@ test('custom pitch dimensions set geometry, proportional spawns, player clamps, 
     Object.assign(state.ball, {x: geometry.world.right - 0.1, xv: 20, yv: 0});
     const next = physics.step(state);
     assert.equal(next.scores[3], 1, 'blue scores at the custom right goal');
-    approximately(next.discs[0].x, 1000 / C.PPM - 1.5);
-    approximately(next.discs[0].y, 700 / C.PPM - 1.5);
-    approximately(next.discs[0].xv, 0);
-    approximately(next.discs[0].yv, 0);
+    approximately(next.discs[0].x, 200 + 8 * 0.92 / 30);
+    approximately(next.discs[0].y, 200 + 8 * 0.92 / 30);
+    approximately(next.discs[0].xv, 8 * 0.92);
+    approximately(next.discs[0].yv, 8 * 0.92);
 });
 
-test('goal height -1 closes both side walls and disables all scoring', () => {
+test('goal height zero closes both side walls and disables all scoring', () => {
     const physics = new FootballPhysics();
     for (const side of ['left', 'right']) {
-        const state = createState([], {settings: {goalHeight: -1}, kickoffTicks: -1});
+        const state = createState([], {settings: {goalHeight: 0}, kickoffTicks: -1});
         const geometry = getPitchGeometry(state);
         assert.equal(geometry.goalEnabled, false);
         assert.deepEqual(geometry.pixels.posts, []);
@@ -404,7 +404,7 @@ test('custom settings survive JSON checkpoints and automatic kickoffs without le
 });
 
 test('geometry previews accept settings-only states and zero-strength kicks stay finite', () => {
-    const geometry = getPitchGeometry({settings: {pitchWidth: 900, pitchHeight: 600, goalHeight: -1}});
+    const geometry = getPitchGeometry({settings: {pitchWidth: 900, pitchHeight: 600, goalHeight: 0}});
     assert.equal(geometry.ppm, 11);
     assert.equal(geometry.pixels.width, 900);
     assert.equal(geometry.pixels.top, 75);
@@ -483,4 +483,126 @@ test('coasting never scores through an open goal and still removes departed play
     assert.equal(coast.players[0], null);
     assert.equal(coast.discs[0], undefined);
     assert.equal(coast.discs[1].kickReady, false, 'coasting does not rearm a released action');
+});
+
+test('signed goal height accepts the exact full playable height for every supported pitch size', () => {
+    for (const pitchHeight of [300, 500, 600, 1000]) {
+        const maximum = goalHeightLimit({pitchHeight});
+        approximately(maximum * C.PPM, pitchHeight - 150);
+        for (const goalHeight of [-maximum, 0, maximum]) {
+            assert.equal(validateMatchSettings({pitchHeight, goalHeight}).error, null);
+            const state = createState([], {settings: {pitchHeight, goalHeight}, kickoffTicks: -1});
+            const next = new FootballPhysics().step(state);
+            for (const value of Object.values(next.ball)) assert.ok(Number.isFinite(value));
+        }
+        assert.ok(validateMatchSettings({pitchHeight, goalHeight: maximum + 0.01}).error);
+        assert.ok(validateMatchSettings({pitchHeight, goalHeight: -maximum - 0.01}).error);
+    }
+    assert.equal(SETTING_RULES.moveForce.min, -128);
+    assert.equal(SETTING_RULES.ballRadius.step, 0.1);
+    assert.equal(SETTING_RULES.playerRadius.step, 0.1);
+    assert.equal(validateMatchSettings({ballRadius: 0.725, playerRadius: 1.125}).error, null, 'older fine-grained radius values remain valid');
+    for (const goalHeight of [-Number.MIN_VALUE, -1e-200, -1e-12, Number.MIN_VALUE]) {
+        const next = new FootballPhysics().step(createState([], {settings: {goalHeight}, kickoffTicks: -1}));
+        assert.ok(Object.values(next.ball).every(Number.isFinite), 'sub-pixel central walls cannot create degenerate Box2D fixtures');
+    }
+});
+
+test('negative goal height exposes outer openings around a solid central wall', () => {
+    const geometry = getPitchGeometry({settings: {goalHeight: -13}});
+    const g = geometry.pixels;
+    assert.equal(geometry.goalEnabled, true);
+    assert.equal(geometry.goalInverted, true);
+    assert.equal(geometry.goalMode, 'outer');
+    assert.equal(g.goalTop, 321.5);
+    assert.equal(g.goalBottom, 178.5);
+    assert.equal(g.middleTop, 178.5);
+    assert.equal(g.middleBottom, 321.5);
+    assert.deepEqual(g.goalOpenings, [{top: 75, bottom: 178.5}, {top: 321.5, bottom: 425}]);
+    assert.deepEqual(g.sideWalls, [{top: 178.5, bottom: 321.5}]);
+    assert.ok(g.wallSegments.some(segment => segment.x1 === 30 && segment.y1 === 178.5 && segment.y2 === 321.5));
+    assert.equal(g.posts.length, 4);
+    for (let i = 0; i < g.wallSegments.length; i++) {
+        for (const key of ['x1', 'y1', 'x2', 'y2']) approximately(geometry.world.wallSegments[i][key] * C.PPM, g.wallSegments[i][key]);
+    }
+});
+
+test('inverted goals score through either outer band on both sides and physically block the centre', () => {
+    const physics = new FootballPhysics();
+    for (const side of ['left', 'right']) {
+        for (const band of [0, 1]) {
+            const state = createState([], {settings: {goalHeight: -13}, kickoffTicks: -1});
+            const g = getPitchGeometry(state).world;
+            const direction = side === 'left' ? -1 : 1;
+            const opening = g.goalOpenings[band];
+            Object.assign(state.ball, {x: g[side] - direction, y: (opening.top + opening.bottom) / 2, xv: direction * 40});
+            const next = physics.step(state);
+            assert.equal(next.scores[side === 'left' ? 2 : 3], 1);
+            assert.equal(next.fte, 90);
+        }
+        const blocked = createState([], {settings: {goalHeight: -13}, kickoffTicks: -1});
+        const g = getPitchGeometry(blocked).world;
+        const direction = side === 'left' ? -1 : 1;
+        Object.assign(blocked.ball, {x: g[side] - direction, y: g.centerY, xv: direction * 40});
+        const rebound = physics.step(blocked);
+        assert.ok(rebound.ball.xv * direction < 0, 'central wall reflects the ball inward');
+        assert.deepEqual(rebound.scores, [0, 0, 0, 0]);
+        for (const y of [g.centerY, g.top - 3, g.bottom + 3]) {
+            const restored = structuredClone(blocked);
+            Object.assign(restored.ball, {x: g[side] + direction * 2, y, xv: 0, yv: 0});
+            assert.deepEqual(physics.step(restored).scores, [0, 0, 0, 0], 'outside checkpoints cannot score through the middle or beyond the playable bands');
+        }
+    }
+});
+
+test('positive full-height goals open the entire side while negative full height closes it', () => {
+    const maximum = goalHeightLimit();
+    const physics = new FootballPhysics();
+    for (const goalHeight of [maximum, -maximum]) {
+        const state = createState([], {settings: {goalHeight}, kickoffTicks: -1});
+        const geometry = getPitchGeometry(state), g = geometry.world;
+        Object.assign(state.ball, {x: g.left + 1, y: g.centerY, xv: -40});
+        const next = physics.step(state);
+        if (goalHeight > 0) {
+            assert.equal(geometry.goalEnabled, true);
+            assert.deepEqual(g.sideWalls, []);
+            assert.equal(g.wallSegments.length, 2);
+            assert.equal(next.scores[2], 1);
+        } else {
+            assert.equal(geometry.goalEnabled, false);
+            assert.deepEqual(g.goalOpenings, []);
+            assert.equal(g.posts.length, 0);
+            assert.ok(next.ball.xv > 0);
+            assert.equal(next.scores[2], 0);
+        }
+    }
+});
+
+test('negative movement force reverses both control axes without changing native damping', () => {
+    const physics = new FootballPhysics();
+    const state = createState([players[0]], {settings: {moveForce: -32}, kickoffTicks: -1});
+    const next = physics.step(state, [{right: true, down: true}]);
+    const expected = -32 / C.PLAYER_MASS / 30 * 0.92;
+    approximately(next.discs[0].xv, expected);
+    approximately(next.discs[0].yv, expected);
+    const opposite = physics.step(state, [{left: true, up: true}]);
+    approximately(opposite.discs[0].xv, -expected);
+    approximately(opposite.discs[0].yv, -expected);
+});
+
+test('players can move through visible letterbox margins beyond every original canvas edge', () => {
+    const physics = new FootballPhysics();
+    const cases = [
+        {x: 0.2, y: 2, input: {left: true}, axis: 'x', boundary: 0, sign: -1},
+        {x: C.WIDTH / C.PPM - 0.2, y: 2, input: {right: true}, axis: 'x', boundary: C.WIDTH / C.PPM, sign: 1},
+        {x: 20, y: 0.2, input: {up: true}, axis: 'y', boundary: 0, sign: -1},
+        {x: 20, y: C.HEIGHT / C.PPM - 0.2, input: {down: true}, axis: 'y', boundary: C.HEIGHT / C.PPM, sign: 1},
+    ];
+    for (const example of cases) {
+        let state = active([players[0]]);
+        Object.assign(state.discs[0], {x: example.x, y: example.y});
+        for (let tick = 0; tick < 12; tick++) state = physics.step(state, [example.input]);
+        assert.ok((state.discs[0][example.axis] - example.boundary) * example.sign > 0);
+        assert.ok(state.discs[0][example.axis + 'v'] * example.sign > 0);
+    }
 });

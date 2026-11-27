@@ -26,11 +26,8 @@ three-column row at the top of the pitch. There are no separate lobby side
 preference buttons. Joining a team saves that preference while keeping the
 teams balanced.
 
-The lobby is playable. Connected team members can move around the entire canvas,
-kick the ball and collide with posts and other players while waiting. This uses
-the same authoritative physics as the match, with no goals, round countdowns
-or results. A ball kicked through an opening bounces at the outside of the
-canvas, keeping it reachable. Spectators watch without controlling a disc.
+Choosing a team in the lobby only changes the roster. Players spawn and can
+move when the game starts; the server ignores movement and kicks beforehand.
 
 Between games, each team player has a Ready button and a visible ready status.
 When every participating player is ready, the server starts a new game
@@ -54,7 +51,7 @@ game boundary. The server owns phase deadlines and voting eligibility.
 
 Rockets finishes with its fastest-goal leaderboard on a separate screen for
 ten seconds. It then fades out into the Balanced teams lobby, where players
-can practise and ready up again. The lobby team lists stay hidden during both
+can choose teams and ready up again. The lobby team lists stay hidden during both
 end screens. Both transitions use a 350-millisecond fade.
 
 ## Rockets
@@ -94,6 +91,9 @@ action. Quick heavy presses are retained until a physics tick can process them,
 including while several movement keys are held.
 Enter focuses room chat; Enter again sends the message and focuses the game,
 including when the input is empty. Holding Enter cannot reopen chat after sending.
+Movement keys also return control to the game after using a button, without
+requiring a click on the pitch. Text inputs, sliders, menus and sign-in dialogs
+retain their own keyboard controls while focused.
 Escape releases controls. Touch buttons support
 holding movement and kick together. Fullscreen, sound and Leave controls
 sit over the pitch. Fullscreen expands the pitch and its overlays to the entire
@@ -156,14 +156,15 @@ list, rather than a claim that every later Bonk release uses identical data.
 ## Match settings
 
 An administrator with access enabled can edit these values. Each field has a
-Default button that restores its input without applying it automatically:
+reset icon that restores its input without applying it automatically. Goal
+height and both radii use sliders; the radius sliders snap in steps of 0.1:
 
 | Setting | Native default | Meaning |
 | --- | ---: | --- |
 | First to | 3 | Goals needed to win a game |
-| Goal opening | 13 | Distance between the goal posts in physics units; -1 closes both goals and disables scoring |
+| Goal height | 13 | Positive values open the middle; negative values put a solid wall in the middle with openings above and below. Zero closes the goals. The range extends to the full pitch height between its top and bottom walls. |
 | Kick strength | 15 | Impulse applied to the ball by a kick |
-| Movement force | 32 | Player acceleration force, which also affects movement speed |
+| Movement speed | 32 | Player acceleration force; negative values reverse the controls at that strength |
 | Ball radius | 0.7 | Ball size in physics units |
 | Player radius | 1 | Player/disc size in physics units |
 | Pitch width | 730 | Width in display pixels |
@@ -172,7 +173,7 @@ Default button that restores its input without applying it automatically:
 The server validates every setting, including whether the goal opening fits in
 the pitch. The same configuration drives server physics, local prediction and
 the rendered field. Closed goals provide a practice game; an administrator can
-return it to the lobby. Apply updates lobby practice immediately. During a
+return it to the lobby. Apply updates lobby configuration immediately. During a
 match, Apply queues the settings for the next kickoff or Rockets turn; the
 current round keeps its existing geometry and physics. Changes queued during
 voting or results apply to the next game. Queued settings are included in the
@@ -202,7 +203,9 @@ The pitch is 730 by 500 display units at 11 pixels per physics unit. The engine
 runs at 30 Hz. Blue spawns on the left and attacks right; Red spawns on the right
 and attacks left. The ball collides with the inner walls; players can move
 outside those markings, while both collide with the posts. Kickoff freezes for
-120 ticks. A goal starts a 90-tick celebration before a new kickoff; reaching
+120 ticks. Players can also move into the extra visible space around the pitch;
+their movement is no longer clamped to the original canvas rectangle. A goal starts a
+90-tick celebration before a new kickoff; reaching
 the winning score finishes the match after that celebration.
 
 The Canvas renderer, generated sound cues, room protocol and frontend are Bonk
@@ -212,7 +215,7 @@ join Bonk's public rooms or grant Bonk account XP.
 During results, the continuation vote and their fade-out, bodies continue
 damping and colliding naturally. Controls, kicks, scoring and kickoff resets
 are disabled during this coast. The server continues sending snapshots until
-the next game or lobby practice starts.
+the next game starts or the lobby returns.
 
 ## Server and deployment
 

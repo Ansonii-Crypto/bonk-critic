@@ -1,5 +1,5 @@
 import Box2D from './vendor/box2d.js';
-import {DEFAULT_MATCH_SETTINGS, validateMatchSettings} from './settings.js';
+import {DEFAULT_MATCH_SETTINGS, validateMatchSettings} from './settings.js?v=20261127-football-13';
 
 // Mechanics and geometry checked against the supplied Bonk football client:
 // bonkannotated.js:11925, 12341, 12530, 12583, 12722. World units are metres.
@@ -92,14 +92,24 @@ export function getPitchGeometry(state = {}) {
     const settings = {...DEFAULT_MATCH_SETTINGS, ...state.settings};
     const ppm = state.ppm ?? C.PPM;
     const goalHeight = state.goalHeight ?? settings.goalHeight;
-    const goalEnabled = goalHeight !== -1;
     const width = settings.pitchWidth;
     const height = settings.pitchHeight;
     const left = (state.borderThickness ?? C.BORDER_THICKNESS) + (state.borderThicknessXInner ?? C.INNER_BORDER_X);
     const top = (state.borderThickness ?? C.BORDER_THICKNESS) + (state.borderThicknessYInner ?? C.INNER_BORDER_Y);
     const centerX = width / 2;
     const centerY = height / 2;
-    const halfGoal = goalEnabled ? goalHeight * ppm / 2 : 0;
+    const bottom = height - top;
+    const span = Math.min(Math.abs(goalHeight * ppm), bottom - top);
+    const start = centerY - span / 2;
+    const end = centerY + span / 2;
+    const interval = (top, bottom) => ({top, bottom});
+    const nonempty = intervals => intervals.filter(range => range.bottom - range.top > 1e-8);
+    const goalOpenings = nonempty(goalHeight > 0 ? [interval(start, end)]
+        : goalHeight < 0 ? [interval(top, start), interval(end, bottom)] : []);
+    const sideWalls = nonempty(goalHeight > 0 ? [interval(top, start), interval(end, bottom)]
+        : goalHeight < 0 ? [interval(start, end)] : [interval(top, bottom)]);
+    const goalEnabled = goalOpenings.length > 0;
+    const goalInverted = goalHeight < 0;
     const pixels = {
         width,
         height,
@@ -108,26 +118,41 @@ export function getPitchGeometry(state = {}) {
         left,
         right: width - left,
         top,
-        bottom: height - top,
-        goalTop: centerY - halfGoal,
-        goalBottom: centerY + halfGoal,
+        bottom,
+        goalTop: centerY - goalHeight * ppm / 2,
+        goalBottom: centerY + goalHeight * ppm / 2,
+        middleTop: start,
+        middleBottom: end,
         wallThickness: 5,
         postRadius: 8,
         ballRadius: settings.ballRadius * ppm,
         playerRadius: settings.playerRadius * ppm,
+        goalOpenings,
+        sideWalls,
+        wallSegments: [
+            {x1: left, y1: top, x2: width - left, y2: top},
+            {x1: left, y1: bottom, x2: width - left, y2: bottom},
+            ...sideWalls.flatMap(range => [
+                {x1: left, y1: range.top, x2: left, y2: range.bottom},
+                {x1: width - left, y1: range.top, x2: width - left, y2: range.bottom},
+            ]),
+        ],
         posts: [],
     };
-    if (goalEnabled) {
+    if (goalEnabled && span > 1e-8) {
         pixels.posts = [
-            {x: pixels.left, y: pixels.goalTop, radius: pixels.postRadius},
-            {x: pixels.right, y: pixels.goalTop, radius: pixels.postRadius},
-            {x: pixels.left, y: pixels.goalBottom, radius: pixels.postRadius},
-            {x: pixels.right, y: pixels.goalBottom, radius: pixels.postRadius},
+            {x: pixels.left, y: start, radius: pixels.postRadius},
+            {x: pixels.right, y: start, radius: pixels.postRadius},
+            {x: pixels.left, y: end, radius: pixels.postRadius},
+            {x: pixels.right, y: end, radius: pixels.postRadius},
         ];
     }
-    const world = Object.fromEntries(Object.entries(pixels).filter(([key]) => key !== 'posts').map(([key, value]) => [key, value / ppm]));
+    const world = Object.fromEntries(Object.entries(pixels).filter(([, value]) => typeof value === 'number').map(([key, value]) => [key, value / ppm]));
+    world.goalOpenings = goalOpenings.map(range => ({top: range.top / ppm, bottom: range.bottom / ppm}));
+    world.sideWalls = sideWalls.map(range => ({top: range.top / ppm, bottom: range.bottom / ppm}));
+    world.wallSegments = pixels.wallSegments.map(segment => Object.fromEntries(Object.entries(segment).map(([key, value]) => [key, value / ppm])));
     world.posts = pixels.posts.map(post => ({x: post.x / ppm, y: post.y / ppm, radius: post.radius / ppm}));
-    return {ppm, goalEnabled, pixels, world};
+    return {ppm, goalEnabled, goalInverted, goalMode: goalHeight > 0 ? 'center' : goalInverted ? 'outer' : 'closed', pixels, world};
 }
 
 function outputBody(body) {
@@ -161,8 +186,8 @@ function createPitch(world, state) {
     const ppm = state.ppm;
     const halfWidth = (settings.pitchWidth - 2 * (state.borderThickness + state.borderThicknessXInner)) / ppm / 2;
     const halfHeight = (settings.pitchHeight - 2 * (state.borderThickness + state.borderThicknessYInner)) / ppm / 2;
-    const goalEnabled = state.goalHeight !== -1;
-    const halfGoal = state.goalHeight / 2;
+    const halfGoal = Math.min(Math.abs(state.goalHeight) / 2, halfHeight);
+    const goalEnabled = state.goalHeight > 0 || (state.goalHeight < 0 && halfGoal < halfHeight - 1e-9);
     const wall = 5 / ppm;
     const definition = new BodyDef();
     definition.type = Body.b2_staticBody;
@@ -180,18 +205,21 @@ function createPitch(world, state) {
         [[halfWidth + wall, -halfHeight], [-halfWidth - wall, -halfHeight], [-halfWidth - wall, -halfHeight - wall], [halfWidth + wall, -halfHeight - wall]],
         [[halfWidth + wall, halfHeight + wall], [-halfWidth - wall, halfHeight + wall], [-halfWidth - wall, halfHeight], [halfWidth + wall, halfHeight]],
     ];
-    if (goalEnabled) {
+    if (state.goalHeight > 0 && halfGoal < halfHeight - 1e-9) {
         polygons.push(
             [[-halfWidth, -halfGoal], [-halfWidth - wall, -halfGoal], [-halfWidth - wall, -halfHeight], [-halfWidth, -halfHeight]],
             [[halfWidth, -halfHeight], [halfWidth + wall, -halfHeight], [halfWidth + wall, -halfGoal], [halfWidth, -halfGoal]],
             [[-halfWidth, halfHeight], [-halfWidth - wall, halfHeight], [-halfWidth - wall, halfGoal], [-halfWidth, halfGoal]],
             [[halfWidth, halfGoal], [halfWidth + wall, halfGoal], [halfWidth + wall, halfHeight], [halfWidth, halfHeight]],
         );
-    } else {
-        polygons.push(
-            [[-halfWidth, halfHeight], [-halfWidth - wall, halfHeight], [-halfWidth - wall, -halfHeight], [-halfWidth, -halfHeight]],
-            [[halfWidth, -halfHeight], [halfWidth + wall, -halfHeight], [halfWidth + wall, halfHeight], [halfWidth, halfHeight]],
-        );
+    } else if (state.goalHeight <= 0) {
+        const solidHalfHeight = state.goalHeight === 0 ? halfHeight : halfGoal;
+        if (solidHalfHeight > 1e-9) {
+            polygons.push(
+                [[-halfWidth, solidHalfHeight], [-halfWidth - wall, solidHalfHeight], [-halfWidth - wall, -solidHalfHeight], [-halfWidth, -solidHalfHeight]],
+                [[halfWidth, -solidHalfHeight], [halfWidth + wall, -solidHalfHeight], [halfWidth + wall, solidHalfHeight], [halfWidth, solidHalfHeight]],
+            );
+        }
     }
     for (const vertices of polygons) {
         fixture.shape = new Polygon();
@@ -200,7 +228,7 @@ function createPitch(world, state) {
     }
     fixture.restitution = C.POST_RESTITUTION;
     fixture.filter.maskBits = 6;
-    const posts = goalEnabled ? [[-halfWidth, -halfGoal], [halfWidth, -halfGoal], [-halfWidth, halfGoal], [halfWidth, halfGoal]] : [];
+    const posts = goalEnabled && halfGoal > 1e-9 ? [[-halfWidth, -halfGoal], [halfWidth, -halfGoal], [-halfWidth, halfGoal], [halfWidth, halfGoal]] : [];
     for (const [x, y] of posts) {
         fixture.shape = new Circle(8 / ppm);
         fixture.shape.SetLocalPosition(new Vec2(x, y));
@@ -240,28 +268,6 @@ function kick(body, disc, input, ball, sounds, settings) {
     }
     if (!input.action) kickReady = true;
     return kickReady;
-}
-
-function clampPlayer(body, ppm, settings) {
-    const position = body.GetPosition();
-    const velocity = body.GetLinearVelocity();
-    const radius = settings.playerRadius;
-    if (position.x < radius) {
-        position.x = radius;
-        velocity.x = 0;
-    }
-    if (position.x > settings.pitchWidth / ppm - radius) {
-        position.x = settings.pitchWidth / ppm - radius;
-        velocity.x = 0;
-    }
-    if (position.y < radius) {
-        position.y = radius;
-        velocity.y = 0;
-    }
-    if (position.y > settings.pitchHeight / ppm - radius) {
-        position.y = settings.pitchHeight / ppm - radius;
-        velocity.y = 0;
-    }
 }
 
 function keepPracticeBall(body, ppm, settings) {
@@ -331,7 +337,6 @@ export class FootballPhysics {
             }
             if (coast || practice || state.ftu === -1) world.Step(C.DT, C.VELOCITY_ITERATIONS, C.POSITION_ITERATIONS);
             world.ClearForces();
-            bodies.forEach(body => clampPlayer(body, state.ppm, settings));
             // Lobby goals do not end rounds. Bounce at the outer canvas edge
             // so a practice kick through an opening stays reachable.
             if (practice) keepPracticeBall(ball, state.ppm, settings);
@@ -339,7 +344,12 @@ export class FootballPhysics {
             const scores = state.scores.slice();
             let lastScorer = state.lscr;
             let goalScored = false;
-            if (!coast && !practice && state.ftu === -1 && state.fte === -1 && state.goalHeight !== -1) {
+            let openGoalBand = state.goalHeight > 0;
+            if (state.goalHeight < 0) {
+                const y = ball.GetPosition().y;
+                openGoalBand = getPitchGeometry(state).world.goalOpenings.some(range => y > range.top && y < range.bottom);
+            }
+            if (!coast && !practice && state.ftu === -1 && state.fte === -1 && openGoalBand) {
                 const x = ball.GetPosition().x;
                 const leftGoal = (state.borderThickness + state.borderThicknessXInner) / state.ppm;
                 const rightGoal = (settings.pitchWidth - state.borderThickness - state.borderThicknessXInner) / state.ppm;

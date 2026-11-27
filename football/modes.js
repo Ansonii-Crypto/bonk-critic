@@ -29,7 +29,7 @@ export function goalSpeed(beforeState, afterState) {
     const team = afterState?.lscr;
     if ((team !== 2 && team !== 3) || beforeState?.ftu !== -1 || beforeState?.fte !== -1
         || afterState?.ftu !== -1 || afterState?.fte !== 90
-        || beforeState.goalHeight === -1 || afterState.goalHeight === -1) return null;
+        || beforeState.goalHeight === 0 || afterState.goalHeight === 0) return null;
     const opponent = team === 2 ? 3 : 2;
     const before = beforeState.scores;
     const after = afterState.scores;

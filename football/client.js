@@ -1,11 +1,11 @@
-import {FootballPhysics, FOOTBALL_CONSTANTS as C, getPitchGeometry} from './physics.js?v=20261127-football-9';
-import {DEFAULT_MATCH_SETTINGS, SETTING_RULES, validateMatchSettings} from './settings.js';
-import {FOOTBALL_MODES, ballSpeed} from './modes.js?v=20261126-football-5';
+import {FootballPhysics, FOOTBALL_CONSTANTS as C, getPitchGeometry} from './physics.js?v=20261127-football-13';
+import {DEFAULT_MATCH_SETTINGS, SETTING_RULES, validateMatchSettings, goalHeightLimit} from './settings.js?v=20261127-football-13';
+import {FOOTBALL_MODES, ballSpeed} from './modes.js?v=20261127-football-13';
 import {maskProfanity} from './chat-filter.js?v=20261127-football-6';
 import {DEFAULT_KEYBINDS, BINDING_ACTIONS, validateKeybinds, canonicalBindingCode} from './keybinds.js?v=20261127-football-6';
 import {initFootballAccount} from './account-menu.js?v=20261127-football-11';
 import {FootballWatcher} from './watcher.js?v=20261127-football-8';
-import {FootballPredictor} from './prediction.js?v=20261127-football-11';
+import {FootballPredictor} from './prediction.js?v=20261127-football-13';
 
 const $ = id => document.getElementById(id);
 const canvas = $('footballCanvas');
@@ -39,8 +39,9 @@ const viewport = {width: 730, height: 500, scale: 1, x: 0, y: 0, ratio: 1};
 const teamName = team => team === 3 ? 'Blue' : team === 2 ? 'Red' : 'Spectators';
 const self = () => room?.members.find(member => member.id === memberId);
 const isOpen = () => ready && socket?.readyState === WebSocket.OPEN;
-const movementPhase = () => room?.status === 'playing' || room?.status === 'lobby';
+const movementPhase = () => room?.status === 'playing';
 const editable = target => target?.closest?.('input,textarea,select,button,summary,[contenteditable="true"]');
+const gameInputBlocked = target => target?.closest?.('input,textarea,select,[contenteditable="true"],[role="menu"],[role="menubar"],.user-account-menu[open]') || !!document.querySelector('dialog[open]');
 const settingsFingerprint = settings => JSON.stringify(Object.keys(SETTING_RULES).map(key => settings[key] ?? DEFAULT_MATCH_SETTINGS[key]));
 const countdown = deadline => Math.max(0, Math.ceil((Number(deadline || 0) - Date.now() - serverClockOffset) / 1000));
 const modeName = () => room?.mode === 'rockets' ? FOOTBALL_MODES.rockets.label : 'Balanced teams';
@@ -280,7 +281,7 @@ function acceptState(state, serverTick = 0, inputs = [], ackSeq) {
     lastInputs = Array.isArray(inputs) ? inputs : [];
     lastSnapshotAt = now;
     predicted = self()?.team && movementPhase() ? predictor.acceptSnapshot({state, tick: serverTick, inputs: lastInputs, ackSeq}, {
-        now, rtt: latency, slot: self().slot, practice: room.status === 'lobby',
+        now, rtt: latency, slot: self().slot,
         phaseKey: [room.status, room.rockets?.attackerId || '', self().team].join(':'),
     }) : null;
     setText($('scoreBlue'), state.scores[3]); setText($('scoreRed'), state.scores[2]);
@@ -491,26 +492,71 @@ function buildSettingsFields() {
     for (const [key, rule] of Object.entries(SETTING_RULES)) {
         const field = document.createElement('div'), title = document.createElement('span'), input = document.createElement('input');
         field.className = 'field setting-field'; title.className = 'setting-label'; title.id = 'label-' + key;
-        title.textContent = rule.label; input.id = 'setting-' + key; input.name = key; input.type = 'number';
-        input.min = rule.disabledValue ?? rule.min; input.max = rule.max; input.step = rule.step;
+        const slider = ['goalHeight', 'ballRadius', 'playerRadius'].includes(key);
+        title.textContent = rule.label + ':'; input.id = 'setting-' + key; input.name = key; input.type = slider ? 'range' : 'number';
+        input.min = rule.min; input.max = rule.max; input.step = key === 'goalHeight' ? 'any' : slider ? 0.1 : rule.step;
         input.value = DEFAULT_MATCH_SETTINGS[key]; input.required = true; input.setAttribute('aria-labelledby', title.id);
         const row = document.createElement('div'), reset = document.createElement('button');
-        row.className = 'setting-input-row';
+        row.className = 'setting-input-row' + (slider ? ' setting-slider-row' : '');
+        row.append(input);
+        if (slider) {
+            const value = document.createElement('output'); value.id = 'value-' + key; value.className = 'setting-value'; value.htmlFor = input.id;
+            row.append(value);
+        }
         reset.type = 'button'; reset.className = 'setting-reset button-secondary button-small'; reset.dataset.resetSetting = key;
-        reset.textContent = 'Default'; reset.setAttribute('aria-label', 'Reset ' + rule.label.toLowerCase() + ' to default (' + DEFAULT_MATCH_SETTINGS[key] + ')');
+        reset.title = 'Reset ' + rule.label.toLowerCase() + ' to ' + DEFAULT_MATCH_SETTINGS[key]; reset.setAttribute('aria-label', reset.title);
+        const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        icon.setAttribute('viewBox', '0 0 24 24'); icon.setAttribute('aria-hidden', 'true'); icon.setAttribute('fill', 'none'); icon.setAttribute('stroke', 'currentColor'); icon.setAttribute('stroke-width', '1.8'); icon.setAttribute('stroke-linecap', 'round'); icon.setAttribute('stroke-linejoin', 'round');
+        for (const d of ['M20 7v5h-5M20 12a8 8 0 0 0-13.7-5.7', 'M4 17v-5h5M4 12a8 8 0 0 0 13.7 5.7']) {
+            const path = document.createElementNS('http://www.w3.org/2000/svg', 'path'); path.setAttribute('d', d); icon.append(path);
+        }
+        reset.append(icon);
         reset.addEventListener('click', () => {
             input.value = DEFAULT_MATCH_SETTINGS[key];
             settingsDirty = settingsFingerprint(readSettingsFields()) !== settingsFingerprint(room?.pendingSettings || room?.settings || DEFAULT_MATCH_SETTINGS);
             if (room) updateSettings();
         });
-        row.append(input, reset); field.append(title, row);
-        const hint = document.createElement('small'); hint.className = 'setting-hint';
-        hint.textContent = 'Default: ' + DEFAULT_MATCH_SETTINGS[key] + (rule.unit ? ' ' + rule.unit : '') + (key === 'goalHeight' ? '. Use -1 to close both goals.' : '');
-        field.append(hint); container.append(field);
+        row.append(reset); field.append(title, row);
+        if (key === 'goalHeight' || key === 'moveForce') {
+            const hint = document.createElement('small'); hint.className = 'setting-hint'; hint.id = 'hint-' + key;
+            hint.textContent = key === 'goalHeight' ? 'Negative: openings above and below a solid middle wall. Zero: closed.' : 'Negative values reverse the movement controls.';
+            input.setAttribute('aria-describedby', hint.id); field.append(hint);
+        }
+        container.append(field);
+        if (key === 'goalHeight') {
+            input.addEventListener('input', () => {
+                const limit = goalHeightLimit({pitchHeight: Number($('setting-pitchHeight')?.value) || DEFAULT_MATCH_SETTINGS.pitchHeight});
+                const value = Number(input.value), endpoint = Math.abs(Math.abs(value) - limit) < 1e-7;
+                input.value = Math.max(-limit, Math.min(limit, endpoint ? value : Math.round(value * 10) / 10));
+            });
+            input.addEventListener('keydown', event => {
+                const value = Number(input.value), limit = Number(input.max);
+                let next;
+                if (event.key === 'Home') next = -limit;
+                else if (event.key === 'End') next = limit;
+                else if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') next = (Math.ceil(value * 10 - 1e-7) - 1) / 10;
+                else if (event.key === 'ArrowRight' || event.key === 'ArrowUp') next = (Math.floor(value * 10 + 1e-7) + 1) / 10;
+                else return;
+                event.preventDefault(); input.value = Math.max(-limit, Math.min(limit, next)); input.dispatchEvent(new Event('input', {bubbles: true}));
+            });
+        }
+    }
+    syncSettingSliders();
+}
+
+function syncSettingSliders() {
+    const goal = $('setting-goalHeight');
+    const value = Number(goal.value), limit = goalHeightLimit({pitchHeight: Number($('setting-pitchHeight').value) || DEFAULT_MATCH_SETTINGS.pitchHeight});
+    goal.min = -limit; goal.max = limit; goal.value = Math.max(-limit, Math.min(limit, value));
+    for (const key of ['goalHeight', 'ballRadius', 'playerRadius']) {
+        const input = $('setting-' + key), value = Number(input.value);
+        $('value-' + key).value = Number(value.toFixed(2)) + ' m';
+        input.setAttribute('aria-valuetext', Number(value.toFixed(2)) + ' metres');
     }
 }
 
 function readSettingsFields() {
+    syncSettingSliders();
     return Object.fromEntries(Object.keys(SETTING_RULES).map(key => [key, Number($('setting-' + key).value)]));
 }
 
@@ -518,16 +564,18 @@ function updateSettings() {
     const target = room.pendingSettings || room.settings, signature = settingsFingerprint(target);
     if (signature !== settingsSignature && !settingsDirty) {
         // An unchanged roster/chat update must not overwrite a form being edited.
-        for (const key of Object.keys(SETTING_RULES)) $('setting-' + key).value = target[key] ?? DEFAULT_MATCH_SETTINGS[key];
+        for (const key of Object.keys(SETTING_RULES).filter(key => key !== 'goalHeight')) $('setting-' + key).value = target[key] ?? DEFAULT_MATCH_SETTINGS[key];
+        syncSettingSliders(); $('setting-goalHeight').value = target.goalHeight ?? DEFAULT_MATCH_SETTINGS.goalHeight;
         settingsDirty = false; settingsSignature = signature;
     }
+    syncSettingSliders();
     const disabled = !isOpen() || !self()?.admin || pendingSettingsSignature !== null;
     $('matchSettingsForm').querySelectorAll('input,button').forEach(input => input.disabled = disabled);
     $('saveSettings').disabled = disabled || !settingsDirty;
     setText($('saveSettings'), room.status === 'playing' ? 'Apply next round' : room.status === 'lobby' ? 'Apply settings' : 'Apply next game');
     if ($('settingsStatus')) setText($('settingsStatus'), settingsDirty ? 'Unsaved changes. Apply when ready.'
         : room.pendingSettings ? 'Changes are queued for the next kickoff or Rockets turn.'
-        : room.status === 'lobby' ? 'Applies to lobby practice and the next game.' : 'Applied changes take effect at the next kickoff or Rockets turn.');
+        : room.status === 'lobby' ? 'Applies when the next game starts.' : 'Applied changes take effect at the next kickoff or Rockets turn.');
 }
 
 function applyRoom(next) {
@@ -593,20 +641,20 @@ function updateMatchStatus() {
     if (!memberId) text = account ? 'Watching the pitch. Join when you are ready.' : 'Watch the pitch, then sign in to join.';
     else if (room) {
         const me = self();
-        const role = me?.team ? 'Playing for ' + teamName(me.team) : me?.queued ? 'Spectating until the next game' : 'Spectating';
+        const role = me?.team ? (room.status === 'lobby' ? 'Assigned to ' : 'Playing for ') + teamName(me.team) : me?.queued ? 'Spectating until the next game' : 'Spectating';
         if (!ready) text = reconnecting ? 'Connection interrupted. Reconnecting…' : 'Connecting to room…';
         else if (room.status === 'voting') text = room.transition ? 'The selected game is starting.'
             : room.vote?.continuation ? 'Vote to continue. The selected game starts automatically.'
             : 'Choose a mode, then ready up in the lobby.';
         else if (room.status === 'results') text = room.transition ? 'Returning to the lobby.' : 'Rockets complete. Fastest goals are on the pitch.';
-        else if (room.status === 'lobby') text = role + '. Move around while you wait, then ready up.';
+        else if (room.status === 'lobby') text = role + '. Ready up to start the game.';
         else if (room.status === 'finished') text = teamName(room.winner) + ' wins. Ready up for the next game.';
         else if (lastState?.ftu >= 0) text = 'Kickoff in ' + Math.ceil(lastState.ftu / 30) + '. ' + role + '.';
         else if (lastState?.fte >= 0) text = teamName(lastState.lscr) + ' scores!';
         else if (room.mode === 'rockets' && room.rockets) {
             const attacker = room.members.find(member => member.id === room.rockets.attackerId);
             text = (attacker?.name || 'Next player') + ' is shooting. ' + Math.ceil(room.rockets.turnTicksLeft / 30) + 's left.';
-        } else text = role + '. ' + (room.settings.goalHeight < 0 ? 'Goals closed — practice mode.' : 'First to ' + room.settings.scoreLimit + '.');
+        } else text = role + '. ' + (!geometry.goalEnabled ? 'Goals closed — practice mode.' : 'First to ' + room.settings.scoreLimit + '.');
     }
     if (notice && performance.now() < noticeUntil) text = notice;
     if (text !== latestStatus) {latestStatus = text; setText($('matchStatus'), text);}
@@ -848,8 +896,10 @@ window.addEventListener('keydown', event => {
         return;
     }
     if (event.code === 'Escape' && event.target === $('chatInput')) {releaseInput(); canvas.focus({preventScroll: true}); return;}
-    if (!keys.has(canonicalBindingCode(event.code)) || editable(event.target) || !isOpen() || !self()?.team) return;
-    event.preventDefault(); held.add(event.code); updateInput(); warmAudio();
+    if (!keys.has(canonicalBindingCode(event.code)) || gameInputBlocked(event.target) || !movementPhase() || !isOpen() || !self()?.team) return;
+    event.preventDefault();
+    if (document.activeElement !== canvas) canvas.focus({preventScroll: true});
+    held.add(event.code); updateInput(); warmAudio();
 });
 window.addEventListener('keyup', event => {if (['Enter', 'NumpadEnter'].includes(event.code)) chatEnterHeld = false; if (held.delete(event.code)) {event.preventDefault(); updateInput();}});
 window.addEventListener('blur', () => {chatEnterHeld = false; releaseInput();});
@@ -875,7 +925,7 @@ document.addEventListener('visibilitychange', () => {if (document.hidden) releas
 document.addEventListener('focusin', event => {if (editable(event.target)) releaseInput();});
 document.querySelectorAll('[data-control]').forEach(button => {
     button.addEventListener('pointerdown', event => {
-        event.preventDefault(); if (!isOpen() || !self()?.team) return;
+        event.preventDefault(); if (!movementPhase() || !isOpen() || !self()?.team) return;
         button.setPointerCapture(event.pointerId); touches.set(event.pointerId, button.dataset.control);
         button.classList.add('is-pressed'); updateInput(); warmAudio();
     });
@@ -923,6 +973,9 @@ function redrawPitch() {
     const boxHeight = Math.min(270, g.bottom - g.top - 30), boxWidth = Math.min(55, (g.right - g.left) / 5);
     paint.strokeRect(g.left, g.centerY - boxHeight / 2, boxWidth, boxHeight);
     paint.strokeRect(g.right - boxWidth, g.centerY - boxHeight / 2, boxWidth, boxHeight);
+    paint.save(); paint.lineWidth = g.wallThickness; paint.strokeStyle = 'rgba(228,239,222,.65)'; paint.beginPath();
+    for (const wall of g.wallSegments) {paint.moveTo(wall.x1, wall.y1); paint.lineTo(wall.x2, wall.y2);}
+    paint.stroke(); paint.restore();
     for (const post of g.posts) {
         paint.beginPath(); paint.arc(post.x, post.y, post.radius, 0, Math.PI * 2);
         paint.fillStyle = post.x < g.centerX ? '#448aff' : '#d32f2f'; paint.fill(); paint.stroke();
