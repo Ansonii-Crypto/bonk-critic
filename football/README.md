@@ -203,8 +203,10 @@ The pitch is 730 by 500 display units at 11 pixels per physics unit. The engine
 runs at 30 Hz. Blue spawns on the left and attacks right; Red spawns on the right
 and attacks left. The ball collides with the inner walls; players can move
 outside those markings, while both collide with the posts. Kickoff freezes for
-120 ticks. Players can also move into the extra visible space around the pitch;
-their movement is no longer clamped to the original canvas rectangle. A goal starts a
+120 ticks. Players can also move into the extra visible space around the pitch,
+and stop at the edges of their visible game box. Fullscreen and window resizing
+update those bounds on both the server and the local prediction. Changing pitch
+dimensions clears the client's previous geometry and movement samples. A goal starts a
 90-tick celebration before a new kickoff; reaching
 the winning score finishes the match after that celebration.
 

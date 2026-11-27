@@ -11,6 +11,7 @@ const validObject = value => value && typeof value === 'object' && !Array.isArra
 const randomToken = () => crypto.randomUUID().replaceAll('-', '') + crypto.randomUUID().replaceAll('-', '');
 const json = (data, status = 200) => new Response(JSON.stringify(data), {status, headers:{'Content-Type':'application/json', 'Cache-Control':'no-store'}});
 const cleanName = (value, length) => typeof value === 'string' ? value.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, length) : '';
+const validViewportAspect = value => typeof value === 'number' && Number.isFinite(value) && value >= .125 && value <= 8;
 async function digest(token) {return [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token)))].map(byte => byte.toString(16).padStart(2, '0')).join('');}
 const privileged = new Set(['assign', 'settings', 'start', 'rematch', 'abort', 'kick']);
 
@@ -30,7 +31,7 @@ export class FootballRoom {
                 this.room.vote = {id:crypto.randomUUID(), kind:'mode', continuation:true, deadline:Date.now() + MODE_VOTE_TTL, votes:{}, winner:this.room.winner, scores:this.room.lastResult?.scores || this.room.state?.scores.slice() || [0, 0, 0, 0]};
             } else if (this.room.status === 'finished') {this.room.status = 'results'; this.room.results = {...this.room.lastResult, mode:'rockets', deadline:Date.now() + RESULTS_TTL};}
             let joinedAt = 0;
-            for (const member of this.room.members) {member.preferredTeam = [0, 2, 3].includes(member.preferredTeam) ? member.preferredTeam : 0; member.joinedAt = Math.max(member.joinedAt || 0, joinedAt + 1); joinedAt = member.joinedAt; member.connected = false; member.ready = false; member.disconnectedAt = member.disconnectedAt || Date.now(); member.pendingUntil = 0;}
+            for (const member of this.room.members) {member.preferredTeam = [0, 2, 3].includes(member.preferredTeam) ? member.preferredTeam : 0; if (!validViewportAspect(member.viewportAspect)) delete member.viewportAspect; member.joinedAt = Math.max(member.joinedAt || 0, joinedAt + 1); joinedAt = member.joinedAt; member.connected = false; member.ready = false; member.disconnectedAt = member.disconnectedAt || Date.now(); member.pendingUntil = 0;}
             if (this.room.rockets && ![2, 3].includes(this.room.rockets.attackerTeam)) this.room.rockets.attackerTeam = this.room.members.find(member => member.id === this.room.rockets.attackerId)?.team || 3;
             this.room.lastJoinedAt = Math.max(this.room.lastJoinedAt || 0, joinedAt);
             if (Date.now() - this.room.lastActive >= IDLE_TTL) {await this.clearIdle(); return;}
@@ -163,6 +164,14 @@ export class FootballRoom {
         let message; try {message = JSON.parse(raw);} catch {this.reject(connection, 'Invalid message.'); return;}
         if (!validObject(message) || typeof message.type !== 'string') {this.reject(connection, 'Invalid message.'); return;}
         connection.lastMessageAt = now; const member = this.room.members.find(item => item.id === connection.memberId); if (!member) return;
+        if (message.type === 'viewport') {
+            if (!validViewportAspect(message.aspect)) {this.reject(connection, 'Viewport aspect must be a finite number between 0.125 and 8.'); return;}
+            if (member.viewportAspect === message.aspect) return;
+            member.viewportAspect = message.aspect;
+            const player = this.room.state?.players?.[member.slot];
+            if (member.team && player?.id === member.slot && player.team === member.team) player.viewportAspect = message.aspect;
+            this.room.lastActive = now; this.background(this.persist()); return;
+        }
         if (message.type === 'preference') {
             if (![0, 2, 3].includes(message.team)) {this.reject(connection, 'Choose Blue, Red, or Random.'); return;}
             member.preferredTeam = message.team;
@@ -433,7 +442,7 @@ export class FootballRoom {
     systemChat(text) {
         const chat = {type:'chat', id:crypto.randomUUID(), memberId:null, name:'Football', text, time:Date.now(), system:true}; this.room.lastActive = Date.now(); this.broadcast(chat);
     }
-    activePlayers() {const players = []; for (const member of this.room.members) if (member.team === 2 || member.team === 3) players[member.slot] = {id:member.slot, team:member.team, name:member.name}; return players;}
+    activePlayers() {const players = []; for (const member of this.room.members) if (member.team === 2 || member.team === 3) players[member.slot] = {id:member.slot, team:member.team, name:member.name, ...(validViewportAspect(member.viewportAspect) ? {viewportAspect:member.viewportAspect} : {})}; return players;}
     reject(connection, error) {this.send(connection.socket, {type:'error', error}); if (++connection.errors > 40) this.closeAbusive(connection);}
     closeAbusive(connection) {try {connection.socket.close(1008, 'Lobby message limit exceeded.');} catch {} this.disconnect(connection);}
     disconnect(connection) {

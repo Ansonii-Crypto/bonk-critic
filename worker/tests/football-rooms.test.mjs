@@ -256,6 +256,51 @@ test('server physics and socket ownership reject client states, forged slots and
     } finally {cleanup(env);}
 });
 
+test('viewport messages change only the bound member metadata and leave positions, settings and readiness untouched', async () => {
+    const env = environment();
+    try {
+        const first = await member(env, 'First'), second = await member(env, 'Second'), room = roomOf(env), slot = roster(room, first).slot;
+        await command(room, first, {type:'ready', ready:true});
+        await command(room, first, {type:'viewport', aspect:2, memberId:second.member.id, slot:roster(room, second).slot, bounds:{left:-99999}, settings:{pitchWidth:1460}, admin:true});
+        assert.equal(roster(room, first).viewportAspect, 2); assert.equal(roster(room, second).viewportAspect, undefined); assert.equal(roster(room, first).ready, true); assert.equal(room.room.state, null); assert.equal(room.timer, null); assert.equal(room.room.settings.pitchWidth, 730);
+        await command(room, second, {type:'ready', ready:true}); room.stopTimer();
+        assert.equal(room.room.state.players[slot].viewportAspect, 2); const before = structuredClone(room.room.state), settings = {...room.room.settings};
+        await command(room, first, {type:'viewport', aspect:.5});
+        before.players[slot].viewportAspect = .5; assert.deepEqual(room.room.state, before); assert.deepEqual(room.room.settings, settings); assert.equal(room.timer, null);
+        assert.equal(Object.hasOwn(room.publicRoom().members.find(member => member.id === first.member.id), 'viewportAspect'), false);
+        for (const aspect of [.124, 8.001, -1, 0, '2', null, {}, [], Infinity]) await command(room, first, {type:'viewport', aspect});
+        assert.equal(roster(room, first).viewportAspect, .5); assert.equal(room.room.state.players[slot].viewportAspect, .5);
+        await command(room, first, {type:'viewport', aspect:.125}); await command(room, first, {type:'viewport', aspect:8}); assert.equal(roster(room, first).viewportAspect, 8);
+        room.tick(); room.tick();
+        assert.equal(first.socket.received.filter(message => message.type === 'snapshot').at(-1).state.players[slot].viewportAspect, 8);
+    } finally {cleanup(env);}
+});
+
+test('spectators save their viewport for the next game without changing current participants or admitting themselves', async () => {
+    const env = environment();
+    try {
+        const {room, members} = await match(env, 1), spectator = await member(env, 'Waiting'), slot = roster(room, spectator).slot, before = structuredClone(room.room.state);
+        await command(room, spectator, {type:'viewport', aspect:.4, slot:roster(room, members[0]).slot});
+        assert.equal(roster(room, spectator).viewportAspect, .4); assert.equal(roster(room, spectator).team, 0); assert.equal(roster(room, spectator).queued, true); assert.deepEqual(room.room.state, before);
+        room.room.state.fte = 0; room.room.state.scores[2] = 1; room.tick(); assert.equal(room.room.state.players[slot] || null, null);
+        room.finishGame(2); for (const data of members.concat(spectator)) await command(room, data, {type:'modeVote', mode:'balanced'}); await finishTransition(room);
+        assert.equal(room.room.state.players[slot].viewportAspect, .4); assert.ok(room.room.state.discs[slot]);
+    } finally {cleanup(env);}
+});
+
+test('viewport metadata survives native steps, goal resets and cold checkpoint resume', async () => {
+    const env = environment(); let restored;
+    try {
+        const {room, members} = await match(env, 1), slot = roster(room, members[0]).slot;
+        await command(room, members[0], {type:'viewport', aspect:2.4}); room.tick(); assert.equal(room.room.state.players[slot].viewportAspect, 2.4);
+        room.room.state.fte = 0; room.room.state.scores[2] = 1; room.tick(); assert.equal(room.room.state.ftu, 120); assert.equal(room.room.state.players[slot].viewportAspect, 2.4);
+        await room.persist(); restored = new FootballRoom(context(room.ctx.storage), env); await restored.ready; restored.stopTimer(); env.objects.set(ID, restored);
+        assert.equal(restored.room.members[0].viewportAspect, 2.4); assert.equal(restored.room.state.players[slot].viewportAspect, 2.4);
+        const resumed = (await join(env, 'Ignored', {extra:{resumeToken:members[0].member.resumeToken}})).data; await connect(env, resumed); restored.stopTimer();
+        restored.abort('test'); await command(restored, resumed, {type:'ready', ready:true}); restored.stopTimer(); assert.equal(restored.room.state.players[slot].viewportAspect, 2.4);
+    } finally {restored?.stopTimer(); cleanup(env);}
+});
+
 test('origin, one-use ticket TTL, reconnect rotation and account binding remain enforced', async () => {
     const env = environment();
     try {

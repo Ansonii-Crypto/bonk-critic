@@ -1,4 +1,4 @@
-import {FootballPhysics, FOOTBALL_CONSTANTS} from './physics.js?v=20261127-football-14';
+import {FootballPhysics, FOOTBALL_CONSTANTS, getPlayerBounds} from './physics.js?v=20261127-football-15';
 
 const DT = 1000 / FOOTBALL_CONSTANTS.TICK_RATE, EPSILON = 1e-7;
 const finite = (value, fallback = 0) => Number.isFinite(value) ? value : fallback;
@@ -65,10 +65,24 @@ export class ReconciliationOffsets {
 
 export class FootballPredictor {
     constructor({physics = new FootballPhysics(), maxReplayMs = 250, maxSteps = 8, timeline = new InputTimeline(), offsets = new ReconciliationOffsets()} = {}) {
-        this.physics = physics; this.maxReplayMs = clamp(finite(maxReplayMs, 250), DT, 333); this.maxSteps = clamp(Math.floor(finite(maxSteps, 8)), 1, 10); this.timeline = timeline; this.offsets = offsets; this.reset();
+        this.physics = physics; this.maxReplayMs = clamp(finite(maxReplayMs, 250), DT, 333); this.maxSteps = clamp(Math.floor(finite(maxSteps, 8)), 1, 10); this.timeline = timeline; this.offsets = offsets; this.viewportAspect = null; this.reset();
     }
     reset() {
         this.timeline.clear(); this.offsets.clear(); this.state = null; this.slot = null; this.nextStepAt = null; this.simulatedAt = null; this.phaseKey = null; this.authority = null; this.inputs = []; this.practice = false; this.pendingHeavy = false; this.preview = null; this.simulationSteps = 0; this.lastReplaySteps = 0; this.lastAdvanceSteps = 0;
+    }
+    setViewportAspect(aspect) {
+        if (!Number.isFinite(aspect) || aspect < .125 || aspect > 8 || aspect === this.viewportAspect) return false;
+        this.viewportAspect = aspect; this.applyViewport(); this.preview = null; this.offsets.errors.delete('self'); return true;
+    }
+    applyViewport() {
+        const disc = this.state?.discs[this.slot], player = this.state?.players[this.slot];
+        if (!disc || !player || this.viewportAspect === null) return;
+        player.viewportAspect = this.viewportAspect;
+        const bounds = getPlayerBounds(this.state, this.slot);
+        for (const [axis, low, high] of [['x', bounds.left, bounds.right], ['y', bounds.top, bounds.bottom]]) {
+            if (disc[axis] < low) {disc[axis] = low; disc[axis + 'v'] = Math.max(0, disc[axis + 'v']);}
+            else if (disc[axis] > high) {disc[axis] = high; disc[axis + 'v'] = Math.min(0, disc[axis + 'v']);}
+        }
     }
     recordInput(seq, flags, now) {
         if (!Number.isSafeInteger(seq) || seq < 0 || seq > 2147483647 || seq <= this.timeline.lastSeq || !Number.isInteger(flags) || !Number.isFinite(now)) return false;
@@ -88,7 +102,7 @@ export class FootballPredictor {
     }
     signature(state, slot, practice, phaseKey) {
         const settings = state.settings || {};
-        return JSON.stringify([phaseKey ?? '', slot, state.discs[slot]?.team, practice, state.ppm, state.goalHeight, settings.pitchWidth, settings.pitchHeight, settings.ballRadius, settings.playerRadius, settings.moveForce, settings.kickImpulse]);
+        return JSON.stringify([phaseKey ?? '', slot, state.discs[slot]?.team, practice, state.ppm, state.goalHeight, settings.pitchWidth, settings.pitchHeight, settings.ballRadius, settings.playerRadius, settings.moveForce, settings.kickImpulse, this.viewportAspect ?? state.players?.[slot]?.viewportAspect]);
     }
     acceptSnapshot(snapshot, {now = performance.now(), rtt = 0, slot, practice = false, phaseKey = '', snapshotAgeMs} = {}) {
         const source = snapshot?.state;
@@ -100,6 +114,7 @@ export class FootballPredictor {
         const reset = signature !== this.phaseKey || source.ni || (this.authority && source.ftu > this.authority.ftu + 5);
         const oldNextStep = reset ? null : this.nextStepAt;
         this.slot = slot; this.practice = Boolean(practice); this.phaseKey = signature; this.authority = source; this.state = copy(source); this.preview = null; this.inputs = Array.isArray(snapshot.inputs) ? snapshot.inputs.map(flags => flags & 31) : [];
+        this.applyViewport();
         this.timeline.acknowledge(snapshot.ackSeq, now);
         const oneWay = clamp(finite(rtt) / 2, 0, this.maxReplayMs), age = clamp(finite(snapshotAgeMs, oneWay), 0, this.maxReplayMs);
         // Advance the actual age of this snapshot. Adding a second half-RTT

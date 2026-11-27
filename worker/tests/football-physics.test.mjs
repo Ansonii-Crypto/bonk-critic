@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import test from 'node:test';
-import {FootballPhysics, FOOTBALL_CONSTANTS as C, createState, getPitchGeometry} from '../../football/physics.js';
+import {FootballPhysics, FOOTBALL_CONSTANTS as C, createState, getPitchGeometry, getPlayerBounds} from '../../football/physics.js';
 import {DEFAULT_MATCH_SETTINGS, SETTING_RULES, validateMatchSettings, goalHeightLimit} from '../../football/settings.js';
 
 const players = [{id: 0, team: 3, name: 'Blue'}, {id: 1, team: 2, name: 'Red'}];
@@ -25,16 +25,16 @@ test('lobby practice accepts movement and kicks without kickoff freezes, goals o
     assert.equal(throughGoal.sts.some(sound => sound.i === 'footGoal'), false);
 });
 
-test('legacy practice ball recovery does not reintroduce fixed player bounds', () => {
+test('legacy practice ball recovery respects the default visible game box', () => {
     const physics = new FootballPhysics(); let state = active([players[0]]);
     Object.assign(state.ball, {x: 0.1, y: 250 / C.PPM, xv: -30, yv: 0});
     Object.assign(state.discs[0], {x: 0.5, y: 1.1, xv: -5, yv: -5});
     state = physics.step(state, [{left: true, up: true}], {practice: true});
     assert.equal(state.ball.x, C.BALL_RADIUS); assert.ok(state.ball.xv > 0);
-    assert.ok(state.discs[0].x < 0.5); assert.ok(state.discs[0].y < 1.1);
+    assert.equal(state.discs[0].x, C.PLAYER_RADIUS); assert.equal(state.discs[0].y, C.PLAYER_RADIUS);
     for (let index = 0; index < 600; index++) state = physics.step(state, [{right: true, down: true}], {practice: true});
-    assert.ok(state.discs[0].x > C.WIDTH / C.PPM);
-    assert.ok(state.discs[0].y > C.HEIGHT / C.PPM);
+    assert.equal(state.discs[0].x, C.WIDTH / C.PPM - C.PLAYER_RADIUS);
+    assert.equal(state.discs[0].y, C.HEIGHT / C.PPM - C.PLAYER_RADIUS);
     assert.ok(state.ball.x >= C.BALL_RADIUS && state.ball.x <= C.WIDTH / C.PPM - C.BALL_RADIUS);
     assert.deepEqual(state.scores, [0, 0, 0, 0]);
 });
@@ -321,7 +321,7 @@ test('custom ball and player radii change real Box2D wall and post contacts', ()
     assert.ok(next.discs[0].xv > 0, 'larger player meets the circular post sooner');
 });
 
-test('custom pitch dimensions set geometry, proportional spawns and goals without a fixed player clamp', () => {
+test('custom pitch dimensions set geometry, proportional spawns, visible bounds and goal boundaries', () => {
     const physics = new FootballPhysics();
     const settings = {pitchWidth: 1000, pitchHeight: 700, goalHeight: 18, playerRadius: 1.5};
     const state = createState(players, {settings, kickoffTicks: -1});
@@ -339,10 +339,10 @@ test('custom pitch dimensions set geometry, proportional spawns and goals withou
     Object.assign(state.ball, {x: geometry.world.right - 0.1, xv: 20, yv: 0});
     const next = physics.step(state);
     assert.equal(next.scores[3], 1, 'blue scores at the custom right goal');
-    approximately(next.discs[0].x, 200 + 8 * 0.92 / 30);
-    approximately(next.discs[0].y, 200 + 8 * 0.92 / 30);
-    approximately(next.discs[0].xv, 8 * 0.92);
-    approximately(next.discs[0].yv, 8 * 0.92);
+    approximately(next.discs[0].x, getPlayerBounds(state, 0).right);
+    approximately(next.discs[0].y, getPlayerBounds(state, 0).bottom);
+    approximately(next.discs[0].xv, 0);
+    approximately(next.discs[0].yv, 0);
 });
 
 test('goal height zero closes both side walls and disables all scoring', () => {
@@ -585,19 +585,140 @@ test('negative movement force reverses both control axes without changing native
     approximately(opposite.discs[0].yv, -expected);
 });
 
-test('players can move through visible letterbox margins beyond every original canvas edge', () => {
+test('players can traverse letterbox margins and stop at their own visible game box edges', () => {
     const physics = new FootballPhysics();
     const cases = [
-        {x: 0.2, y: 2, input: {left: true}, axis: 'x', boundary: 0, sign: -1},
-        {x: C.WIDTH / C.PPM - 0.2, y: 2, input: {right: true}, axis: 'x', boundary: C.WIDTH / C.PPM, sign: 1},
-        {x: 20, y: 0.2, input: {up: true}, axis: 'y', boundary: 0, sign: -1},
-        {x: 20, y: C.HEIGHT / C.PPM - 0.2, input: {down: true}, axis: 'y', boundary: C.HEIGHT / C.PPM, sign: 1},
+        {x: 0.2, y: 2, input: {left: true}, aspect: 2, axis: 'x', edge: 'left', boundary: 0, sign: -1},
+        {x: C.WIDTH / C.PPM - 0.2, y: 2, input: {right: true}, aspect: 2, axis: 'x', edge: 'right', boundary: C.WIDTH / C.PPM, sign: 1},
+        {x: 20, y: 0.2, input: {up: true}, aspect: 1, axis: 'y', edge: 'top', boundary: 0, sign: -1},
+        {x: 20, y: C.HEIGHT / C.PPM - 0.2, input: {down: true}, aspect: 1, axis: 'y', edge: 'bottom', boundary: C.HEIGHT / C.PPM, sign: 1},
     ];
     for (const example of cases) {
         let state = active([players[0]]);
+        state.players[0].viewportAspect = example.aspect;
         Object.assign(state.discs[0], {x: example.x, y: example.y});
         for (let tick = 0; tick < 12; tick++) state = physics.step(state, [example.input]);
         assert.ok((state.discs[0][example.axis] - example.boundary) * example.sign > 0);
         assert.ok(state.discs[0][example.axis + 'v'] * example.sign > 0);
+        for (let tick = 0; tick < 120; tick++) state = physics.step(state, [example.input]);
+        approximately(state.discs[0][example.axis], getPlayerBounds(state, 0)[example.edge]);
+        approximately(state.discs[0][example.axis + 'v'], 0);
+    }
+});
+
+test('visible bounds are per player, radius-aware, validated, and preserved through JSON and kickoffs', () => {
+    const state = createState([
+        {...players[0], viewportAspect: 2},
+        {...players[1], viewportAspect: 1},
+    ], {settings: {playerRadius: 1.5}, kickoffTicks: -1});
+    const wide = getPlayerBounds(state, 0), tall = getPlayerBounds(state, 1);
+    assert.ok(wide.left < 0 && wide.right > C.WIDTH / C.PPM);
+    approximately(wide.top, 1.5);
+    approximately(wide.bottom, C.HEIGHT / C.PPM - 1.5);
+    assert.ok(tall.top < 0 && tall.bottom > C.HEIGHT / C.PPM);
+    approximately(tall.left, 1.5);
+    approximately(tall.right, C.WIDTH / C.PPM - 1.5);
+    const fallback = {left: 1.5, right: C.WIDTH / C.PPM - 1.5, top: 1.5, bottom: C.HEIGHT / C.PPM - 1.5};
+    for (const invalid of [undefined, null, NaN, Infinity, 0, -1, 0.124, 8.001, '2']) {
+        state.players[0].viewportAspect = invalid;
+        assert.deepEqual(getPlayerBounds(state, 0), fallback);
+    }
+    state.players[0].viewportAspect = 2;
+    const physics = new FootballPhysics();
+    let next = physics.step(JSON.parse(JSON.stringify(state)));
+    assert.equal(next.players[0].viewportAspect, 2);
+    assert.equal(next.players[1].viewportAspect, 1);
+    next.fte = 0;
+    next = physics.step(next);
+    assert.equal(next.players[0].viewportAspect, 2);
+    assert.deepEqual(getPlayerBounds(next, 0), wide);
+    // Shrinking a viewport clamps the body while preserving velocity already
+    // pointing back into the new visible area.
+    next.ftu = -1;
+    next.players[0].viewportAspect = C.WIDTH / C.HEIGHT;
+    Object.assign(next.discs[0], {x: -3, y: 2, xv: 4, yv: 0});
+    next = physics.step(next, [], {coast: true});
+    approximately(next.discs[0].x, 1.5 + 4 * 0.92 / 30);
+    approximately(next.discs[0].xv, 4 * 0.92);
+});
+
+test('reused worlds match fresh worlds through default, resized, closed, and restored pitch contacts', () => {
+    const reused = new FootballPhysics();
+    const large = {pitchWidth: 1000, pitchHeight: 700};
+    const maximum = {pitchWidth: 1460, pitchHeight: 1000, goalHeight: 26.7};
+    const posts = [
+        ...getPitchGeometry(createState()).world.posts,
+        ...getPitchGeometry(createState([], {settings: large})).world.posts,
+        ...getPitchGeometry(createState([], {settings: maximum})).world.posts,
+    ];
+    const sizes = [{}, large, maximum, {pitchWidth: 400, pitchHeight: 300, goalHeight: 6}, {pitchWidth: 900, pitchHeight: 600, goalHeight: -13}, {}];
+    for (const settings of sizes) {
+        for (const kind of ['ball', 'player']) {
+            for (const post of posts) {
+                let expected = createState([players[0]], {settings, kickoffTicks: -1});
+                const g = getPitchGeometry(expected).world;
+                const body = kind === 'ball' ? expected.ball : expected.discs[0];
+                Object.assign(body, {x: post.x - 2.3, y: post.y, xv: 18, yv: 0});
+                if (kind === 'ball') Object.assign(expected.discs[0], {x: g.centerX, y: g.height - 2});
+                else Object.assign(expected.ball, {x: g.centerX, y: g.centerY});
+                let actual = structuredClone(expected);
+                for (let tick = 0; tick < 8; tick++) {
+                    actual = reused.step(actual, [], {coast: true});
+                    expected = new FootballPhysics().step(expected, [], {coast: true});
+                    assert.deepEqual(actual, expected);
+                }
+                assert.equal(reused.world.GetBodyCount(), 1);
+            }
+        }
+    }
+});
+
+test('old posts are empty after pitch growth and new posts collide with both ball and player', () => {
+    const physics = new FootballPhysics();
+    physics.step(active(players));
+    const oldPost = getPitchGeometry(createState()).world.posts[1];
+    const settings = {pitchWidth: 1460, pitchHeight: 1000, goalHeight: 26.7};
+    for (const kind of ['ball', 'player']) {
+        let state = createState([players[0]], {settings, kickoffTicks: -1});
+        const body = kind === 'ball' ? state.ball : state.discs[0];
+        Object.assign(body, {x: oldPost.x - 2.3, y: oldPost.y, xv: 18, yv: 0});
+        if (kind === 'ball') state.discs[0].y = 50;
+        else state.ball.y = 50;
+        for (let tick = 1; tick <= 8; tick++) {
+            state = physics.step(state, [], {coast: true});
+            approximately((kind === 'ball' ? state.ball : state.discs[0]).xv, 18 * (kind === 'ball' ? 0.98 : 0.92) ** tick);
+        }
+        const contact = createState([players[0]], {settings, kickoffTicks: -1});
+        const post = getPitchGeometry(contact).world.posts[1];
+        Object.assign(kind === 'ball' ? contact.ball : contact.discs[0], {x: post.x - (kind === 'ball' ? 1.6 : 2), y: post.y, xv: 18, yv: 0});
+        const next = physics.step(contact, [], {coast: true});
+        assert.ok((kind === 'ball' ? next.ball : next.discs[0]).xv < 0, 'only the new post reflects the body');
+    }
+});
+
+test('viewport shrink starts player contacts at the new edge rather than the hidden old position', () => {
+    const physics = new FootballPhysics();
+    const examples = [
+        {axis: 'x', velocity: 'xv', player: -5, ball: -6.8, speed: -18, edge: 'left'},
+        {axis: 'x', velocity: 'xv', player: 75, ball: 76.8, speed: 18, edge: 'right'},
+        {axis: 'y', velocity: 'yv', player: -5, ball: -6.8, speed: -18, edge: 'top'},
+        {axis: 'y', velocity: 'yv', player: 53, ball: 54.8, speed: 18, edge: 'bottom'},
+    ];
+    for (const example of examples) {
+        const state = active([{...players[0], viewportAspect: C.WIDTH / C.HEIGHT}]);
+        Object.assign(state.discs[0], {x: 20, y: 22, [example.axis]: example.player, [example.velocity]: example.speed});
+        Object.assign(state.ball, {x: 20, y: 22, [example.axis]: example.ball, xv: 0, yv: 0});
+        const next = physics.step(state, [], {coast: true});
+        approximately(next.discs[0][example.axis], getPlayerBounds(state, 0)[example.edge]);
+        approximately(next.discs[0][example.velocity], 0);
+        approximately(next.ball.xv, 0);
+        approximately(next.ball.yv, 0);
+        approximately(next.ball[example.axis], example.ball);
+        assert.equal(state.discs[0][example.axis], example.player, 'source checkpoint is not mutated');
+        assert.equal(state.discs[0][example.velocity], example.speed);
+        const nativeFallback = structuredClone(state);
+        delete nativeFallback.players[0].viewportAspect;
+        const legacy = physics.step(nativeFallback, [], {coast: true});
+        assert.ok(Math.abs(legacy.ball[example.velocity]) > 1, 'without resize metadata the old native post-step clamp would allow this contact');
     }
 });

@@ -1,11 +1,11 @@
-import {FootballPhysics, FOOTBALL_CONSTANTS as C, getPitchGeometry} from './physics.js?v=20261127-football-14';
+import {FootballPhysics, FOOTBALL_CONSTANTS as C, getPitchGeometry} from './physics.js?v=20261127-football-15';
 import {DEFAULT_MATCH_SETTINGS, SETTING_RULES, validateMatchSettings, goalHeightLimit} from './settings.js?v=20261127-football-13';
 import {FOOTBALL_MODES, ballSpeed} from './modes.js?v=20261127-football-14';
 import {maskProfanity} from './chat-filter.js?v=20261127-football-6';
 import {DEFAULT_KEYBINDS, BINDING_ACTIONS, validateKeybinds, canonicalBindingCode} from './keybinds.js?v=20261127-football-6';
 import {initFootballAccount} from './account-menu.js?v=20261127-football-11';
 import {FootballWatcher} from './watcher.js?v=20261127-football-8';
-import {FootballPredictor} from './prediction.js?v=20261127-football-14';
+import {FootballPredictor} from './prediction.js?v=20261127-football-15';
 
 const $ = id => document.getElementById(id);
 const canvas = $('footballCanvas');
@@ -28,6 +28,7 @@ let notice = '', noticeUntil = 0, latestStatus = '', lastScores = [0, 0, 0, 0];
 let account = null, reconnecting = false;
 let settingsDirty = false, settingsSignature = '', pendingSettingsSignature = null, geometrySignature = '';
 let leaderboardSignature = '', serverClockOffset = 0;
+let sentViewportAspect = null;
 let gameUiHidden = false, chatEnterHeld = false, joinAfterLogin = false, selectedPreference = 0, accountLoaded = false;
 let restoreTouch = null;
 let settingsDrawerOpen = false, toolbarHideTimer = null, pointerInToolbarCorner = false;
@@ -230,6 +231,14 @@ function sendInput() {
     if (send({type: 'input', seq, flags: inputFlags})) predictor.recordInput(seq, inputFlags, at);
 }
 
+function syncViewport() {
+    const bounds = canvas.getBoundingClientRect();
+    if (!bounds.width || !bounds.height) return;
+    const aspect = Math.max(.125, Math.min(8, Math.round(bounds.width / bounds.height * 10000) / 10000));
+    predictor.setViewportAspect(aspect);
+    if (isOpen() && aspect !== sentViewportAspect && send({type: 'viewport', aspect})) sentViewportAspect = aspect;
+}
+
 function updateInput() {
     let next = 0;
     for (const key of held) next |= keys.get(canonicalBindingCode(key)) || 0;
@@ -265,9 +274,10 @@ function tone(frequency, duration = 0.06, volume = 0.035) {
 
 function acceptState(state, serverTick = 0, inputs = [], ackSeq) {
     if (!state?.ball || !Array.isArray(state.discs)) return;
-    syncPitch(state);
+    const geometryChanged = syncPitch(state);
     const now = performance.now();
-    const reset = state.ni || (lastState && state.ftu > lastState.ftu + 5);
+    const reset = geometryChanged || state.ni || (lastState && state.ftu > lastState.ftu + 5);
+    if (geometryChanged) {predictor.reset(); predicted = null;}
     if (reset) snapshots = [];
     if (lastState && state.scores.some((score, index) => score > lastScores[index])) {
         tone(440, 0.18, 0.05);
@@ -593,7 +603,7 @@ function applyRoom(next) {
     $('hostControls').hidden = !admin;
     $('adminMatchControls').hidden = !admin;
     syncSidebarPresentation();
-    updateSettings(); syncPitch(room.state);
+    updateSettings();
     $('startMatch').hidden = room.status !== 'lobby';
     $('abortMatch').hidden = !playing || !admin;
     $('abortMatch').disabled = !isOpen();
@@ -622,6 +632,7 @@ function applyRoom(next) {
     if (room.state) acceptState(room.state, tick, lastInputs);
     else {
         lastState = null; predicted = null; snapshots = []; lastScores = [0, 0, 0, 0];
+        syncPitch(null);
         setText($('scoreBlue'), 0); setText($('scoreRed'), 0);
     }
     if ((oldStatus !== room.status || oldAttacker !== room.rockets?.attackerId) && room.status === 'playing' && self()?.team
@@ -666,7 +677,7 @@ async function connectSession(joined) {
     const ownGeneration = ++generation;
     clearTimeout(retryTimer); retryTimer = null;
     socket?.close(1000, 'Replaced connection');
-    ready = false; sequence = 0; predictor.reset(); memberId = joined.member.id;
+    ready = false; sequence = 0; predictor.reset(); sentViewportAspect = null; memberId = joined.member.id;
     storeSeat(joined.room.id, joined.member);
     applyRoom(joined.room);
     const address = new URL(joined.socketPath, API);
@@ -681,7 +692,7 @@ async function connectSession(joined) {
             let message; try {message = JSON.parse(event.data);} catch {return;}
             if (message.type === 'welcome') {
                 ready = true; leaving = false; reconnecting = false; retries = 0; memberId = message.memberId;
-                applyRoom(message.room); setText($('connectionStatus'), 'Connected'); sendInput(); send({type: 'ping', sentAt: performance.now()});
+                applyRoom(message.room); setText($('connectionStatus'), 'Connected'); syncViewport(); sendInput(); send({type: 'ping', sentAt: performance.now()});
                 if (!settled) {settled = true; clearTimeout(timeout); resolve();}
             } else if (message.type === 'room') applyRoom(message.room);
             else if (message.type === 'snapshot') {
@@ -946,12 +957,13 @@ let geometry;
 function syncPitch(state) {
     const next = getPitchGeometry(state || {settings: room?.settings || DEFAULT_MATCH_SETTINGS});
     const signature = JSON.stringify(next.pixels);
-    if (signature === geometrySignature) return;
+    if (signature === geometrySignature) return false;
     geometry = next; geometrySignature = signature;
     const g = geometry.pixels;
     canvas.parentElement.style.setProperty('--pitch-ratio', g.width + ' / ' + g.height);
     canvas.parentElement.style.setProperty('--pitch-ratio-value', String(g.width / g.height));
     resizeCanvas();
+    return true;
 }
 
 function redrawPitch() {
@@ -988,6 +1000,7 @@ function resizeCanvas() {
     const g = geometry?.pixels || {width: C.WIDTH, height: C.HEIGHT};
     viewport.scale = Math.min(bounds.width / g.width, bounds.height / g.height);
     viewport.x = (bounds.width - g.width * viewport.scale) / 2; viewport.y = (bounds.height - g.height * viewport.scale) / 2;
+    syncViewport();
     redrawPitch();
 }
 new ResizeObserver(resizeCanvas).observe(canvas);

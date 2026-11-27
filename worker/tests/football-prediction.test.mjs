@@ -123,6 +123,49 @@ test('phase changes snap and obsolete action2 flags cannot enter prediction', ()
     predictor.reset(); assert.equal(predictor.state, null); assert.equal(predictor.timeline.records.length, 0); assert.equal(predictor.recordInput(1, 2, 102), true);
 });
 
+test('viewport changes immediately replace cached previews and constrain only the local player', () => {
+    const predictor = new FootballPredictor(), state = initial(); state.ni = false;
+    predictor.setViewportAspect(2);
+    predictor.acceptSnapshot({state, inputs:[0], ackSeq:-1}, {now:0, slot:0});
+    predictor.state.discs[0].x = 72; predictor.state.discs[0].xv = 5;
+    predictor.previewState(); assert.ok(predictor.preview);
+    predictor.setViewportAspect(1);
+    assert.equal(predictor.preview, null);
+    assert.equal(predictor.state.discs[0].x, 730 / 11 - 1);
+    assert.equal(predictor.state.discs[0].xv, 0);
+    assert.equal(state.players[0].viewportAspect, undefined, 'the authoritative snapshot remains untouched');
+    assert.ok(predictor.renderBody('self', predictor.state.discs[0], 10).x <= 730 / 11 - 1);
+});
+
+test('local viewport bounds survive old server metadata and prediction reset while awaiting acknowledgement', () => {
+    const predictor = new FootballPredictor(), state = initial(); state.ni = false;
+    state.players[0].viewportAspect = 2; state.discs[0].x = 72;
+    predictor.setViewportAspect(1);
+    for (const now of [0, 66, 132]) {
+        predictor.acceptSnapshot({state, inputs:[0], ackSeq:-1}, {now, slot:0});
+        assert.equal(predictor.state.players[0].viewportAspect, 1);
+        assert.equal(predictor.state.discs[0].x, 730 / 11 - 1);
+    }
+    predictor.reset();
+    predictor.acceptSnapshot({state, inputs:[0], ackSeq:-1}, {now:200, slot:0});
+    assert.equal(predictor.state.players[0].viewportAspect, 1);
+    assert.equal(predictor.setViewportAspect(Infinity), false);
+    assert.equal(predictor.setViewportAspect(0), false);
+});
+
+test('resizing to the maximum pitch discards old contact previews even without a kickoff marker', () => {
+    const predictor = new FootballPredictor(), old = initial(); old.ni = false;
+    Object.assign(old.ball, {x:700 / 11 - 1.5, y:178.5 / 11, xv:30, yv:0});
+    predictor.acceptSnapshot({state:old, inputs:[0], ackSeq:-1}, {now:0, slot:0});
+    predictor.previewState();
+    const resized = createState([{id:0, team:3, name:'Player'}], {settings:{pitchWidth:1460, pitchHeight:1000, goalHeight:26.7}, kickoffTicks:-1});
+    resized.ni = false; Object.assign(resized.ball, old.ball);
+    predictor.acceptSnapshot({state:resized, inputs:[0], ackSeq:-1}, {now:100, slot:0});
+    assert.ok(predictor.previewState().ball.xv > 0, 'the old right post cannot reverse the preview');
+    assert.equal(predictor.offsets.errors.size, 0);
+    predictor.advance(134); assert.ok(predictor.state.ball.xv > 0);
+});
+
 // Reproduce the former client: every 15 Hz snapshot clones state, advances
 // floor(RTT/2/DT) using current flags, resets its clock, and EMA-filters self.
 class SnapshotResetBaseline {

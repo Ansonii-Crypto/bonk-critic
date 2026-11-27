@@ -154,6 +154,67 @@ export function getPitchGeometry(state = {}) {
     return {ppm, goalEnabled, goalInverted, goalMode: goalHeight > 0 ? 'center' : 'closed', pixels, world};
 }
 
+export function getPlayerBounds(state, slot) {
+    const settings = state.settings || DEFAULT_MATCH_SETTINGS;
+    const ppm = state.ppm ?? C.PPM;
+    const width = settings.pitchWidth / ppm;
+    const height = settings.pitchHeight / ppm;
+    const reportedAspect = state.players?.[slot]?.viewportAspect;
+    const aspect = Number.isFinite(reportedAspect) && reportedAspect >= 0.125 && reportedAspect <= 8
+        ? reportedAspect : width / height;
+    const extraX = aspect > width / height ? (height * aspect - width) / 2 : 0;
+    const extraY = aspect < width / height ? (width / aspect - height) / 2 : 0;
+    const radius = settings.playerRadius;
+    return {
+        left: -extraX + radius,
+        right: width + extraX - radius,
+        top: -extraY + radius,
+        bottom: height + extraY - radius,
+    };
+}
+
+function clampPlayer(body, state, slot) {
+    const bounds = getPlayerBounds(state, slot);
+    const position = body.GetPosition();
+    const velocity = body.GetLinearVelocity();
+    if (position.x <= bounds.left) {
+        position.x = bounds.left;
+        if (velocity.x < 0) velocity.x = 0;
+    } else if (position.x >= bounds.right) {
+        position.x = bounds.right;
+        if (velocity.x > 0) velocity.x = 0;
+    }
+    if (position.y <= bounds.top) {
+        position.y = bounds.top;
+        if (velocity.y < 0) velocity.y = 0;
+    } else if (position.y >= bounds.bottom) {
+        position.y = bounds.bottom;
+        if (velocity.y > 0) velocity.y = 0;
+    }
+}
+
+function playerSourceWithinViewport(source, state, slot) {
+    const aspect = state.players?.[slot]?.viewportAspect;
+    if (!Number.isFinite(aspect) || aspect < 0.125 || aspect > 8) return source;
+    // Resize before creating the body, so its sweep and broadphase proxy begin
+    // at the new visible edge and cannot contact a ball at the old position.
+    const result = {...source};
+    const bounds = getPlayerBounds(state, slot);
+    for (const [axis, velocity, minimum, maximum] of [
+        ['x', 'xv', bounds.left, bounds.right],
+        ['y', 'yv', bounds.top, bounds.bottom],
+    ]) {
+        if (result[axis] <= minimum) {
+            result[axis] = minimum;
+            if (result[velocity] < 0) result[velocity] = 0;
+        } else if (result[axis] >= maximum) {
+            result[axis] = maximum;
+            if (result[velocity] > 0) result[velocity] = 0;
+        }
+    }
+    return result;
+}
+
 function outputBody(body) {
     const position = body.GetPosition();
     const velocity = body.GetLinearVelocity();
@@ -318,7 +379,7 @@ export class FootballPhysics {
         try {
             state.discs.forEach((disc, slot) => {
                 if (!disc || left.has(slot)) return;
-                bodies[slot] = createCircle(world, disc, {
+                bodies[slot] = createCircle(world, playerSourceWithinViewport(disc, state, slot), {
                     radius: settings.playerRadius, mass: C.PLAYER_MASS, damping: C.PLAYER_LINEAR_DAMPING, category: 2, type: 'disc',
                 });
                 ready[slot] = disc.kickReady;
@@ -333,6 +394,7 @@ export class FootballPhysics {
             }
             if (coast || practice || state.ftu === -1) world.Step(C.DT, C.VELOCITY_ITERATIONS, C.POSITION_ITERATIONS);
             world.ClearForces();
+            bodies.forEach((body, slot) => clampPlayer(body, state, slot));
             // Lobby goals do not end rounds. Bounce at the outer canvas edge
             // so a practice kick through an opening stays reachable.
             if (practice) keepPracticeBall(ball, state.ppm, settings);
