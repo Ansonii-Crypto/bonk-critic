@@ -4,7 +4,7 @@ import {ROCKET_TURN_TICKS, goalSpeed, balancedTeamAssignments, rocketsRoster, ro
 import {FOOTBALL_HUB_ID} from './football-api.js';
 
 const TICKET_TTL = 30_000, RESUME_GRACE = 15_000, HEARTBEAT_TTL = 15_000, IDLE_TTL = 30 * 60_000;
-const MAX_MEMBERS = 64, TEAM_SIZE = 4, MESSAGE_LIMIT = 1024;
+const MAX_MEMBERS = 64, MAX_WATCHERS = 64, TEAM_SIZE = 4, MESSAGE_LIMIT = 1024;
 const MODE_VOTE_TTL = 15_000, REBALANCE_VOTE_TTL = 15_000, RESULTS_TTL = 10_000;
 const STEP_MS = 1000 / 30, MAX_PUMP_DELTA = 250, MAX_CATCHUP_STEPS = 8;
 const validObject = value => value && typeof value === 'object' && !Array.isArray(value);
@@ -17,16 +17,18 @@ const privileged = new Set(['assign', 'settings', 'start', 'rematch', 'abort', '
 export class FootballRoom {
     constructor(ctx, env) {
         this.ctx = ctx; this.env = env; this.room = null;
-        this.connections = new Map(); this.tickets = new Map(); this.inputs = []; this.inputTimes = []; this.sequences = []; this.playerLeaves = new Set();
+        this.connections = new Map(); this.watchers = new Map(); this.tickets = new Map(); this.inputs = []; this.inputTimes = []; this.sequences = []; this.playerLeaves = new Set();
         this.physics = new FootballPhysics(); this.timer = null; this.lastPumpAt = 0; this.accumulator = 0; this.tickNumber = 0; this.lastSaved = 0; this.persistChain = Promise.resolve();
         this.ready = ctx.blockConcurrencyWhile(async () => {
             const saved = await ctx.storage.get('checkpoint');
             if (!saved || ![2, 3].includes(saved.version)) return;
             this.room = saved.room; this.tickNumber = saved.tick || 0;
+            this.room.chat = [];
             Object.assign(this.room, {mode:this.room.mode || 'balanced', modeSelected:this.room.modeSelected ?? false, balanceDeferred:this.room.balanceDeferred || false, vote:this.room.vote || null, rebalanceVote:this.room.rebalanceVote || null, rockets:this.room.rockets || null, results:this.room.results || null});
             if (this.room.status === 'finished') {this.room.status = 'results'; this.room.results = {...this.room.lastResult, mode:'balanced', deadline:Date.now() + RESULTS_TTL};}
             let joinedAt = 0;
-            for (const member of this.room.members) {member.joinedAt = Math.max(member.joinedAt || 0, joinedAt + 1); joinedAt = member.joinedAt; member.connected = false; member.ready = false; member.disconnectedAt = member.disconnectedAt || Date.now(); member.pendingUntil = 0;}
+            for (const member of this.room.members) {member.preferredTeam = [0, 2, 3].includes(member.preferredTeam) ? member.preferredTeam : 0; member.joinedAt = Math.max(member.joinedAt || 0, joinedAt + 1); joinedAt = member.joinedAt; member.connected = false; member.ready = false; member.disconnectedAt = member.disconnectedAt || Date.now(); member.pendingUntil = 0;}
+            if (this.room.rockets && ![2, 3].includes(this.room.rockets.attackerTeam)) this.room.rockets.attackerTeam = this.room.members.find(member => member.id === this.room.rockets.attackerId)?.team || 3;
             this.room.lastJoinedAt = Math.max(this.room.lastJoinedAt || 0, joinedAt);
             if (Date.now() - this.room.lastActive >= IDLE_TTL) {await this.clearIdle(); return;}
             this.sweep(); this.ensureTimer(); await this.scheduleAlarm();
@@ -42,11 +44,12 @@ export class FootballRoom {
     publicRoom() {
         const room = this.ensureRoom(), queue = room.members.filter(member => member.queued).sort((a, b) => a.queueOrder - b.queueOrder);
         return {id:room.id, name:room.name, hostId:null, status:room.status, mode:room.mode, vote:this.publicVote(room.vote), rebalanceVote:this.publicVote(room.rebalanceVote), rockets:this.publicRockets(), results:room.results, settings:{...room.settings}, winner:room.winner, lastResult:room.lastResult, allReady:this.allReady(), canStart:this.canStart(), queueLength:queue.length,
-            members:room.members.map(member => ({id:member.id, slot:member.slot, name:member.name, verified:member.verified, admin:member.admin, host:false, team:member.team, connected:member.connected, ready:member.ready, queued:member.queued, queueTeam:member.queueTeam, queuePosition:member.queued ? queue.findIndex(item => item.id === member.id) + 1 : null})), state:room.state, chat:room.chat};
+            members:room.members.map(member => ({id:member.id, slot:member.slot, name:member.name, verified:member.verified, admin:member.admin, host:false, team:member.team, preferredTeam:member.preferredTeam || 0, connected:member.connected, ready:member.ready, queued:member.queued, queueTeam:member.queueTeam, queuePosition:member.queued ? queue.findIndex(item => item.id === member.id) + 1 : null})), state:room.state};
     }
     async fetch(request) {
         await this.ready; this.sweep(); const path = new URL(request.url).pathname;
         if (path === '/info' && request.method === 'GET') return json({room:this.publicRoom()});
+        if (path === '/watch' && request.method === 'GET') {this.ensureRoom(); return this.watchUpgrade(request);}
         if ((path === '/join' || path === '/create') && request.method === 'POST') {this.ensureRoom(); return this.join(await request.json().catch(() => null));}
         if (path === '/socket' && request.method === 'GET') return this.room ? this.upgrade(request, new URL(request.url)) : json({error:'Lobby session expired. Join again.'}, 404);
         return json({error:'Route not found.'}, 404);
@@ -67,6 +70,8 @@ export class FootballRoom {
     }
     async join(body) {
         if (!validObject(body)) return json({error:'Invalid lobby request.'}, 400);
+        if (typeof body.identity?.username !== 'string' || !body.identity.username.trim() || !/^[1-9][0-9]{0,15}$/.test(String(body.identity.bonkId || ''))) return json({error:'Sign in with your Bonk account to join.'}, 401);
+        if (body.preferredTeam !== undefined && ![0, 2, 3].includes(body.preferredTeam)) return json({error:'Choose Blue, Red, or Random.'}, 400);
         const now = Date.now(); this.pruneTickets(now); let member;
         if (body.resumeToken != null) {
             if (typeof body.resumeToken !== 'string' || !/^[a-f0-9]{64}$/.test(body.resumeToken)) return json({error:'Invalid lobby resume token.'}, 403);
@@ -79,10 +84,11 @@ export class FootballRoom {
             if (!name) return json({error:'Enter a display name.'}, 400);
             const slot = Array.from({length:MAX_MEMBERS}, (_, i) => i).find(i => !this.room.members.some(item => item.slot === i));
             const joinedAt = Math.max(now, (this.room.lastJoinedAt || 0) + 1); this.room.lastJoinedAt = joinedAt;
-            member = {id:crypto.randomUUID(), slot, name, verified, bonkId:verified ? String(body.identity.bonkId) : null, admin:false, adminContext:null, team:0, ready:false, queued:true, queueTeam:0, queueOrder:this.room.nextQueueOrder++, connected:false, disconnectedAt:now, pendingUntil:now + TICKET_TTL, joinedAt};
+            member = {id:crypto.randomUUID(), slot, name, verified, bonkId:verified ? String(body.identity.bonkId) : null, admin:false, adminContext:null, team:0, preferredTeam:body.preferredTeam ?? 0, ready:false, queued:true, queueTeam:0, queueOrder:this.room.nextQueueOrder++, connected:false, disconnectedAt:now, pendingUntil:now + TICKET_TTL, joinedAt};
             this.room.members.push(member);
         }
         const identity = body.identity;
+        if (body.preferredTeam !== undefined) member.preferredTeam = body.preferredTeam;
         if (!member.bonkId && identity?.bonkId && typeof identity.username === 'string' && identity.username.trim()) {
             member.bonkId = String(identity.bonkId); member.verified = true; member.name = cleanName(identity.username, 32);
         }
@@ -96,6 +102,29 @@ export class FootballRoom {
         if (!member.connected) member.pendingUntil = now + TICKET_TTL;
         this.room.lastActive = now; await this.persist(); await this.scheduleAlarm(); this.broadcastRoom();
         return json({room:this.publicRoom(), member:{id:member.id, resumeToken}, ticket, socketPath:`/api/football/rooms/${FOOTBALL_HUB_ID}/socket?ticket=${ticket}`});
+    }
+    watchUpgrade(request) {
+        if (!this.env.ALLOWED_ORIGIN || request.headers.get('Origin') !== this.env.ALLOWED_ORIGIN) return json({error:'Untrusted request origin.'}, 403);
+        if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') return json({error:'WebSocket upgrade required.'}, 426);
+        if (this.watchers.size >= MAX_WATCHERS) return json({error:'The live viewer limit has been reached.'}, 409);
+        const pair = new WebSocketPair(), client = pair[0], server = pair[1], id = crypto.randomUUID(); server.accept();
+        const watcher = {id, socket:server, lastMessageAt:Date.now(), replenished:Date.now(), tokens:20}; this.watchers.set(id, watcher);
+        const close = () => {if (this.watchers.get(id) !== watcher) return; this.watchers.delete(id); this.background(this.scheduleAlarm());};
+        server.addEventListener('close', close); server.addEventListener('error', close);
+        server.addEventListener('message', event => this.watchMessage(watcher, event.data));
+        this.send(server, {type:'watch', room:this.publicRoom()}); this.background(this.scheduleAlarm());
+        return new Response(null, {status:101, webSocket:client});
+    }
+    watchMessage(watcher, raw) {
+        if (this.watchers.get(watcher.id) !== watcher) return;
+        const now = Date.now(); watcher.tokens = Math.min(20, watcher.tokens + (now - watcher.replenished) * .01); watcher.replenished = now;
+        let message;
+        if (typeof raw === 'string' && raw.length <= 256 && --watcher.tokens >= 0) {try {message = JSON.parse(raw);} catch {}}
+        if (!validObject(message) || message.type !== 'ping') {
+            this.watchers.delete(watcher.id); try {watcher.socket.close(1008, 'Live viewers may only send ping messages.');} catch {} this.background(this.scheduleAlarm()); return;
+        }
+        watcher.lastMessageAt = now;
+        this.send(watcher.socket, {type:'pong', sentAt:typeof message.sentAt === 'number' && Number.isFinite(message.sentAt) ? message.sentAt : null, serverTime:now});
     }
     upgrade(request, url) {
         if (!this.env.ALLOWED_ORIGIN || request.headers.get('Origin') !== this.env.ALLOWED_ORIGIN) return json({error:'Untrusted request origin.'}, 403);
@@ -116,7 +145,10 @@ export class FootballRoom {
         return new Response(null, {status:101, webSocket:client});
     }
     send(socket, data) {try {socket.send(JSON.stringify(data));} catch {}}
-    broadcast(data) {for (const connection of this.connections.values()) this.send(connection.socket, data);}
+    broadcast(data) {
+        for (const connection of this.connections.values()) this.send(connection.socket, data);
+        if (data.type === 'room') for (const watcher of this.watchers.values()) this.send(watcher.socket, data);
+    }
     broadcastRoom() {if (this.room) this.broadcast({type:'room', room:this.publicRoom()});}
     background(promise) {if (this.ctx.waitUntil) this.ctx.waitUntil(promise.catch(() => {})); else void promise.catch(() => {});}
     async message(connection, raw) {
@@ -126,6 +158,16 @@ export class FootballRoom {
         let message; try {message = JSON.parse(raw);} catch {this.reject(connection, 'Invalid message.'); return;}
         if (!validObject(message) || typeof message.type !== 'string') {this.reject(connection, 'Invalid message.'); return;}
         connection.lastMessageAt = now; const member = this.room.members.find(item => item.id === connection.memberId); if (!member) return;
+        if (message.type === 'preference') {
+            if (![0, 2, 3].includes(message.team)) {this.reject(connection, 'Choose Blue, Red, or Random.'); return;}
+            member.preferredTeam = message.team;
+            const rockets = this.room.rockets;
+            if (this.room.status === 'playing' && this.room.mode === 'rockets' && rockets?.attackerId === member.id && !rockets.turnEnded && !rockets.sideChangeUsed) {
+                const team = this.rocketAttackerTeam(member, rockets.turnIndex);
+                if (team !== rockets.attackerTeam) {rockets.attackerTeam = team; rockets.sideChangeUsed = true; this.setupRocketRoles();}
+            } else if (this.room.status === 'lobby') this.promoteQueue();
+            await this.changed(); return;
+        }
         if (message.type === 'modeVote') {
             if (this.room.status !== 'voting' || !this.room.vote || !['balanced', 'rockets'].includes(message.mode) || !this.voteEligible().some(item => item.id === member.id)) {this.reject(connection, 'There is no eligible mode vote for that choice.'); return;}
             if (this.room.vote.deadline <= now) {this.resolveModeVote(); await this.changed(); this.reject(connection, 'That mode vote has ended.'); return;}
@@ -149,7 +191,7 @@ export class FootballRoom {
             const text = cleanName(message.text, 180); if (!text || typeof message.text !== 'string' || message.text.length > 180) {this.reject(connection, 'Chat messages must be 1–180 characters.'); return;}
             connection.chatTimes = connection.chatTimes.filter(time => time > now - 10_000); if (connection.chatTimes.length >= 4) {this.reject(connection, 'Please slow down in chat.'); return;}
             connection.chatTimes.push(now); const chat = {type:'chat', id:crypto.randomUUID(), memberId:member.id, name:member.name, text, time:now};
-            this.room.chat.push(chat); if (this.room.chat.length > 40) this.room.chat.shift(); this.room.lastActive = now; this.broadcast(chat); this.background(this.persist()); return;
+            this.room.lastActive = now; this.broadcast(chat); this.background(this.persist()); return;
         }
         if (message.type === 'leave') {this.removeMember(member.id, 'Left the lobby.'); await this.changed(); return;}
         if (['team', 'queue', 'spectate'].includes(message.type)) {
@@ -203,7 +245,7 @@ export class FootballRoom {
     }
     promoteQueue() {
         if (this.room.status === 'playing' && this.room.mode === 'balanced' && this.room.balanceDeferred) return this.fillVacancies();
-        const selection = balancedTeamAssignments(this.room.members, TEAM_SIZE), assignments = new Map(selection.assignments.map(item => [item.id, item.team]));
+        const selection = balancedTeamAssignments(this.room.members, TEAM_SIZE), assignments = this.preferredAssignments(selection.assignments);
         let changed = false;
         for (const member of this.room.members) {
             const team = assignments.get(member.id) || 0;
@@ -212,6 +254,20 @@ export class FootballRoom {
             else if (member.team) {member.team = 0; member.queued = true; member.queueOrder = this.room.nextQueueOrder++;}
         }
         if (changed) this.clearReadiness(); return changed;
+    }
+    preferredAssignments(baseAssignments) {
+        const members = baseAssignments.map(item => this.room.members.find(member => member.id === item.id)), baseline = new Map(baseAssignments.map(item => [item.id, item.team]));
+        let best = baseline, bestMatches = -1, bestMoves = Infinity, bestDeviation = Infinity;
+        // At most eight players: exhaustively honor the most preferences while
+        // retaining balanced sides, then minimize moves and retain stable ties.
+        for (let mask = 0; mask < 2 ** members.length; mask++) {
+            const blue = members.reduce((count, _, index) => count + ((mask >> index) & 1), 0), red = members.length - blue;
+            if (blue > TEAM_SIZE || red > TEAM_SIZE || Math.abs(blue - red) > 1) continue;
+            let matches = 0, moves = 0, deviation = 0; const candidate = new Map();
+            members.forEach((member, index) => {const team = (mask >> index) & 1 ? 3 : 2; candidate.set(member.id, team); if (member.preferredTeam === team) matches++; if (member.team && member.team !== team) moves++; if (baseline.get(member.id) !== team) deviation++;});
+            if (matches > bestMatches || (matches === bestMatches && (moves < bestMoves || (moves === bestMoves && deviation < bestDeviation)))) {best = candidate; bestMatches = matches; bestMoves = moves; bestDeviation = deviation;}
+        }
+        return best;
     }
     fillVacancies() {
         const counts = {2:this.room.members.filter(member => member.team === 2).length, 3:this.room.members.filter(member => member.team === 3).length}; let changed = false;
@@ -278,17 +334,24 @@ export class FootballRoom {
     publicRockets() {
         const rockets = this.room?.rockets; if (!rockets) return null;
         const participants = this.room.members.filter(member => rockets.participantIds.includes(member.id));
-        return {participantIds:[...rockets.participantIds], attackerId:rockets.attackerId, turnTicksLeft:rockets.turnTicksLeft, turnIndex:rockets.turnIndex, totalTurns:rockets.totalTurns, unit:'m/s', leaderboard:rocketsLeaderboard(participants, rockets.records)};
+        return {participantIds:[...rockets.participantIds], attackerId:rockets.attackerId, attackerTeam:rockets.attackerTeam, sideChangeUsed:Boolean(rockets.sideChangeUsed), turnTicksLeft:rockets.turnTicksLeft, turnIndex:rockets.turnIndex, totalTurns:rockets.totalTurns, unit:'m/s', leaderboard:rocketsLeaderboard(participants, rockets.records)};
     }
+    rocketAttackerTeam(member, turnIndex) {return member?.preferredTeam === 2 || member?.preferredTeam === 3 ? member.preferredTeam : turnIndex % 2 ? 3 : 2;}
     startRocketTurn() {
         const rockets = this.room.rockets; if (!rockets) return;
         const id = rockets.participantIds.find(candidate => !rockets.completedIds.includes(candidate));
         if (!id) {this.finishGame(null); return;}
-        rockets.attackerId = id; rockets.turnTicksLeft = ROCKET_TURN_TICKS; rockets.turnIndex = rockets.completedIds.length + 1; rockets.totalTurns = rockets.participantIds.length; rockets.turnEnded = false;
-        const defenders = rockets.participantIds.filter(candidate => candidate !== id).slice(0, TEAM_SIZE);
+        rockets.attackerId = id; rockets.turnTicksLeft = ROCKET_TURN_TICKS; rockets.turnIndex = rockets.completedIds.length + 1; rockets.totalTurns = rockets.participantIds.length; rockets.turnEnded = false; rockets.sideChangeUsed = false;
+        rockets.attackerTeam = this.rocketAttackerTeam(this.room.members.find(member => member.id === id), rockets.turnIndex); this.setupRocketRoles();
+    }
+    setupRocketRoles() {
+        const rockets = this.room.rockets, id = rockets.attackerId, defenders = rockets.participantIds.filter(candidate => candidate !== id).slice(0, TEAM_SIZE), defenderTeam = rockets.attackerTeam === 3 ? 2 : 3;
         for (const member of this.room.members) {
-            if (!rockets.participantIds.includes(member.id)) continue;
-            member.team = member.id === id ? 3 : defenders.includes(member.id) ? 2 : 0;
+            if (!rockets.participantIds.includes(member.id)) {
+                if (member.team) {member.team = 0; member.queued = true; member.queueOrder = this.room.nextQueueOrder++;}
+                continue;
+            }
+            member.team = member.id === id ? rockets.attackerTeam : defenders.includes(member.id) ? defenderTeam : 0;
             member.queued = !member.team; if (member.queued && !member.queueOrder) member.queueOrder = this.room.nextQueueOrder++;
             if (!member.queued) member.queueOrder = null;
         }
@@ -318,7 +381,7 @@ export class FootballRoom {
         this.room.lastResult = {...this.room.results, finishedAt:Date.now()}; this.room.status = 'results'; this.inputs = []; this.clearReadiness(); this.room.rebalanceVote = null; this.ensureTimer(); this.broadcastRoom(); this.background(this.persist()); this.background(this.scheduleAlarm());
     }
     systemChat(text) {
-        const chat = {type:'chat', id:crypto.randomUUID(), memberId:null, name:'Football', text, time:Date.now(), system:true}; this.room.chat.push(chat); if (this.room.chat.length > 40) this.room.chat.shift(); this.broadcast(chat);
+        const chat = {type:'chat', id:crypto.randomUUID(), memberId:null, name:'Football', text, time:Date.now(), system:true}; this.room.lastActive = Date.now(); this.broadcast(chat);
     }
     activePlayers() {const players = []; for (const member of this.room.members) if (member.team === 2 || member.team === 3) players[member.slot] = {id:member.slot, team:member.team, name:member.name}; return players;}
     reject(connection, error) {this.send(connection.socket, {type:'error', error}); if (++connection.errors > 40) this.closeAbusive(connection);}
@@ -355,6 +418,7 @@ export class FootballRoom {
     sweep() {
         if (!this.room) return; const now = Date.now(); this.pruneTickets(now);
         if (now - this.room.lastActive >= IDLE_TTL) {this.background(this.clearIdle()); return;}
+        for (const watcher of [...this.watchers.values()]) if (now - watcher.lastMessageAt >= HEARTBEAT_TTL) {this.watchers.delete(watcher.id); try {watcher.socket.close(4004, 'Live view timed out.');} catch {}}
         for (const connection of [...this.connections.values()]) if (now - connection.lastMessageAt >= HEARTBEAT_TTL) {try {connection.socket.close(4004, 'Lobby connection timed out.');} catch {} this.disconnect(connection);}
         let changed = false;
         for (const member of [...this.room.members]) if (!member.connected && now >= (member.pendingUntil || (member.disconnectedAt || now) + RESUME_GRACE)) {this.removeMember(member.id, 'Lobby session expired.'); changed = true;}
@@ -408,7 +472,7 @@ export class FootballRoom {
             const speed = goalSpeed(state, this.room.state);
             if (speed !== null) {
                 rockets.turnEnded = true;
-                if (this.room.state.lscr === 3) {
+                if (this.room.state.lscr === rockets.attackerTeam) {
                     rockets.records[rockets.attackerId] = {scored:true, speed, timeTicks:ROCKET_TURN_TICKS - rockets.turnTicksLeft};
                     const attacker = this.room.members.find(member => member.id === rockets.attackerId); if (attacker) this.systemChat(`${attacker.name} reached ${speed.toFixed(1)} m/s.`);
                 }
@@ -421,21 +485,23 @@ export class FootballRoom {
         if (this.tickNumber % 2 === 0) {
             const frame = {type:'snapshot', tick:this.tickNumber, serverTime:Date.now(), status:this.room.status, mode:this.room.mode, winner:this.room.winner, rockets:this.publicRockets(), rebalanceVote:this.publicVote(this.room.rebalanceVote), state:this.room.state, inputs:Array.from({length:MAX_MEMBERS}, (_, slot) => this.inputs[slot] || 0)};
             for (const connection of this.connections.values()) {const member = this.room.members.find(item => item.id === connection.memberId); this.send(connection.socket, {...frame, ackSeq:this.sequences[member?.slot] ?? -1});}
+            for (const watcher of this.watchers.values()) this.send(watcher.socket, frame);
         }
         if (roundEnded) this.broadcastRoom(); if (Date.now() - this.lastSaved >= 2000) this.background(this.persist());
     }
     persist() {this.lastSaved = Date.now(); const saved = this.room ? JSON.parse(JSON.stringify({version:3, room:this.room, tick:this.tickNumber})) : null; this.persistChain = this.persistChain.catch(() => {}).then(() => saved ? this.ctx.storage.put('checkpoint', saved) : this.ctx.storage.delete('checkpoint')); return this.persistChain;}
     async scheduleAlarm() {
-        if (!this.room || (!this.room.members.length && !this.room.chat.length && !this.room.state && !this.room.vote && !this.room.results)) {if (this.ctx.storage.deleteAlarm) await this.ctx.storage.deleteAlarm(); return;}
-        const deadlines = [this.room.lastActive + IDLE_TTL, ...[this.room.vote, this.room.rebalanceVote, this.room.results].filter(Boolean).map(phase => phase.deadline), ...[...this.connections.values()].map(connection => connection.lastMessageAt + HEARTBEAT_TTL), ...this.room.members.filter(member => !member.connected).map(member => member.pendingUntil || (member.disconnectedAt || Date.now()) + RESUME_GRACE)];
+        if (!this.room || (!this.room.members.length && !this.watchers.size && !this.room.chat.length && !this.room.state && !this.room.vote && !this.room.results)) {if (this.ctx.storage.deleteAlarm) await this.ctx.storage.deleteAlarm(); return;}
+        const deadlines = [this.room.lastActive + IDLE_TTL, ...[this.room.vote, this.room.rebalanceVote, this.room.results].filter(Boolean).map(phase => phase.deadline), ...[...this.connections.values(), ...this.watchers.values()].map(connection => connection.lastMessageAt + HEARTBEAT_TTL), ...this.room.members.filter(member => !member.connected).map(member => member.pendingUntil || (member.disconnectedAt || Date.now()) + RESUME_GRACE)];
         await this.ctx.storage.setAlarm(Math.max(Date.now() + 100, Math.min(...deadlines)));
     }
     async alarm() {await this.ready; this.sweep(); if (this.room) {await this.persist(); await this.scheduleAlarm();}}
     async clearIdle() {
         this.stopTimer(); for (const connection of this.connections.values()) {try {connection.socket.close(4003, 'Lobby session expired.');} catch {}}
-        this.connections.clear(); this.tickets.clear(); this.inputs = []; this.ensureRoom();
+        for (const watcher of this.watchers.values()) {try {watcher.socket.close(4003, 'Live view expired.');} catch {}}
+        this.connections.clear(); this.watchers.clear(); this.tickets.clear(); this.inputs = []; this.ensureRoom();
         this.room.members = []; this.room.chat = []; this.room.state = null; this.room.status = 'lobby'; this.room.winner = null; this.room.vote = null; this.room.modeSelected = false; this.room.results = null; this.room.rockets = null; this.room.rebalanceVote = null; this.room.lastActive = Date.now();
         await this.persist(); if (this.ctx.storage.deleteAlarm) await this.ctx.storage.deleteAlarm();
     }
 }
-export const FOOTBALL_ROOM_LIMITS = Object.freeze({TICKET_TTL, RESUME_GRACE, HEARTBEAT_TTL, IDLE_TTL, MODE_VOTE_TTL, REBALANCE_VOTE_TTL, RESULTS_TTL, MAX_MEMBERS, TEAM_SIZE, MESSAGE_LIMIT});
+export const FOOTBALL_ROOM_LIMITS = Object.freeze({TICKET_TTL, RESUME_GRACE, HEARTBEAT_TTL, IDLE_TTL, MODE_VOTE_TTL, REBALANCE_VOTE_TTL, RESULTS_TTL, MAX_MEMBERS, MAX_WATCHERS, TEAM_SIZE, MESSAGE_LIMIT});

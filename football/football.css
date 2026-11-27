@@ -1958,3 +1958,757 @@ kbd {
         margin-top: 10px;
     }
 }
+
+/* Pitch-first layout: entry, teams, chat and controls belong to the field. */
+.game-layout {
+    display: block;
+}
+
+.arena-column {
+    width: 100%;
+    grid-area: auto;
+}
+
+.arena-frame {
+    isolation: isolate;
+    max-height: max(210px, calc(100dvh - 250px));
+}
+
+.site-header {
+    padding-inline: max(20px, calc((100% - 1712px) / 2));
+}
+
+.page-heading h1 {
+    margin: 5px 0 6px;
+    font-size: clamp(30px, 4vw, 46px);
+}
+
+.page-description {
+    font-size: 13px;
+}
+
+.field-toolbar {
+    position: absolute;
+    z-index: 30;
+    top: max(10px, env(safe-area-inset-top));
+    right: max(10px, env(safe-area-inset-right));
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    max-width: calc(100% - 20px);
+}
+
+.field-tool {
+    min-height: 30px;
+    padding: 6px 10px;
+    border: 1px solid #ffffff50;
+    border-radius: 5px;
+    background: #1f3c2bd9;
+    color: #fffdf5;
+    box-shadow: 0 2px 5px #13261d30;
+    font-size: 10px;
+    font-weight: 800;
+    white-space: nowrap;
+}
+
+.field-tool[aria-expanded="true"] {
+    border-color: #fff9e9;
+    background: #fff9e9;
+    color: #34462f;
+}
+
+.field-leave {
+    background: #583833d9;
+}
+
+.field-exit {
+    display: none;
+}
+
+.pitch-overlay {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    padding: 52px clamp(10px, 2.4vw, 28px) 18px;
+    overflow: hidden;
+    background: #172b2070;
+    touch-action: pan-y;
+}
+
+.entry-overlay {
+    z-index: 20;
+    background: #19312350;
+}
+
+.entry-card {
+    width: min(380px, 100%);
+    padding: clamp(16px, 2.8vw, 30px);
+    text-align: center;
+    box-shadow: 0 5px 0 #263a2c80, 0 16px 40px #172b2040;
+}
+
+.entry-card h2 {
+    margin: 9px 0 12px;
+    font-size: clamp(23px, 3vw, 34px);
+    line-height: 1.1;
+    letter-spacing: -.04em;
+}
+
+.entry-description {
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.6;
+}
+
+.entry-card .room-form {
+    margin-top: 20px;
+}
+
+.entry-card .room-form > button {
+    width: 100%;
+}
+
+.entry-status {
+    margin-top: 12px;
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.teams-overlay {
+    z-index: 17;
+}
+
+.teams-card {
+    width: min(760px, 100%);
+    max-height: 100%;
+    padding: 23px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border: 3px solid var(--ink);
+    border-radius: 8px;
+    box-shadow: 0 5px 0 #263a2c80, 0 16px 40px #172b2040;
+    scrollbar-width: thin;
+}
+
+.room-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 15px;
+}
+
+.room-heading h2 {
+    margin-top: 5px;
+    font-size: 25px;
+}
+
+.room-heading-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 6px;
+}
+
+.team-preference-panel {
+    margin-top: 20px;
+    padding: 15px;
+    border: 1px solid #b7bba6;
+    border-radius: 6px;
+    background: #f4eedc;
+}
+
+.team-preference-panel h3 {
+    margin-bottom: 11px;
+    font-size: 12px;
+}
+
+.team-preference-buttons {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 9px;
+}
+
+.preference-button {
+    min-height: 37px;
+    border-width: 2px;
+    background: #fff9e9;
+    color: var(--text);
+    box-shadow: 0 2px 0 var(--ink);
+    font-size: 12px;
+}
+
+.preference-button .team-dot {
+    margin: 0;
+    background: var(--blue);
+}
+
+.preference-blue {
+    border-color: #497bac;
+    color: #365f88;
+    box-shadow: 0 2px 0 #497bac;
+}
+
+.preference-red {
+    border-color: #b75954;
+    color: #9f4846;
+    box-shadow: 0 2px 0 #b75954;
+}
+
+.preference-red .team-dot {
+    border-color: #924744;
+    background: var(--red);
+}
+
+.preference-random {
+    grid-column: 1 / -1;
+    justify-self: center;
+    min-width: 140px;
+}
+
+.preference-button[aria-pressed="true"] {
+    background: #deebd2;
+    outline: 2px solid #738a5b;
+    outline-offset: 2px;
+}
+
+.team-preference-panel .section-description {
+    margin-top: 12px;
+    text-align: center;
+}
+
+.team-lists {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+    column-gap: 23px;
+}
+
+.spectator-team {
+    grid-column: 1 / -1;
+}
+
+.teams-card .roster {
+    max-height: 150px;
+    overflow-y: auto;
+}
+
+.teams-card .roster li {
+    flex-wrap: wrap;
+}
+
+.teams-card .roster-name {
+    flex: 1 1 95px;
+}
+
+.teams-card .roster-actions {
+    margin-left: auto;
+}
+
+.ready-controls {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding-top: 15px;
+    border-top: 1px solid #c7c8b6;
+}
+
+#readyButton {
+    flex: 0 0 auto;
+    width: auto;
+    min-width: 140px;
+}
+
+#readySummary {
+    max-width: 460px;
+}
+
+.queue-panel #joinQueue {
+    width: auto;
+    min-width: 140px;
+    margin-top: 8px;
+}
+
+.game-overlay {
+    z-index: 12;
+    padding-top: 52px;
+}
+
+.rebalance-overlay {
+    z-index: 14;
+    padding-top: 48px;
+}
+
+.rebalance-card {
+    max-height: 100%;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
+
+.rockets-hud {
+    z-index: 3;
+    top: 12px;
+    right: auto;
+    max-width: min(350px, 45%);
+    min-width: 0;
+}
+
+.football-chat {
+    position: absolute;
+    z-index: 4;
+    left: max(12px, env(safe-area-inset-left));
+    bottom: max(12px, env(safe-area-inset-bottom));
+    width: min(340px, 35%);
+    max-width: calc(100% - 24px);
+    min-width: 120px;
+    color: #fffdf5;
+    text-shadow: 0 1px 3px #16301ccc;
+}
+
+.chat-topline {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 5px;
+}
+
+.chat-topline h2 {
+    font-size: 10px;
+    font-weight: 900;
+}
+
+.football-chat .chat-filter-option {
+    margin: 0;
+    gap: 5px;
+    color: #fffdf5;
+    font-size: 9px;
+}
+
+.football-chat .chat-filter-option input {
+    width: 12px;
+    height: 12px;
+}
+
+.football-chat .chat-log {
+    height: clamp(60px, 10vw, 125px);
+    min-height: 0;
+    padding: 8px;
+    margin: 0 0 7px;
+    overflow-y: auto;
+    border: 1px solid #ffffff1c;
+    border-radius: 5px;
+    background: #17301f80;
+    color: #fffdf5;
+    font-size: 11px;
+    line-height: 1.5;
+    scrollbar-width: thin;
+    scrollbar-color: #e5efdf80 transparent;
+    overscroll-behavior: contain;
+}
+
+.football-chat .chat-log:empty {
+    display: none;
+}
+
+.football-chat .chat-log p {
+    margin: 0 0 4px;
+    padding: 0;
+    color: inherit;
+    overflow-wrap: anywhere;
+}
+
+.football-chat .chat-log strong {
+    color: #ffffff;
+}
+
+.football-chat .chat-log .chat-system-message {
+    color: #e7edb8;
+}
+
+.football-chat .chat-form {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 5px;
+    margin: 0;
+}
+
+.football-chat .chat-form input {
+    height: 34px;
+    min-height: 0;
+    padding: 6px 8px;
+    border: 1px solid #ffffff70;
+    background: #fff9e9f2;
+    color: #303630;
+    font-size: 12px;
+    text-shadow: none;
+}
+
+.football-chat .chat-form button {
+    min-height: 0;
+    padding: 5px 8px;
+    border: 1px solid #ffffff70;
+    background: #1f3c2be6;
+    color: #fffdf5;
+    box-shadow: none;
+    font-size: 10px;
+}
+
+.touch-controls {
+    position: absolute;
+    z-index: 4;
+    right: max(12px, env(safe-area-inset-right));
+    bottom: max(12px, env(safe-area-inset-bottom));
+    gap: 10px;
+    padding: 0;
+}
+
+.below-pitch-controls {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+    gap: 14px;
+}
+
+.below-pitch-controls > details {
+    margin-top: 0;
+}
+
+.below-pitch-controls > .admin-panel {
+    grid-column: 1 / -1;
+}
+
+#pitchWrap:fullscreen {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100dvh;
+    max-width: none;
+    max-height: none;
+    min-height: 0;
+    aspect-ratio: auto;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    background: var(--pitch);
+}
+
+#pitchWrap:fullscreen #footballCanvas {
+    width: 100%;
+    height: 100%;
+    max-width: none;
+    max-height: none;
+}
+
+#pitchWrap:fullscreen #fullscreenToggle {
+    display: none;
+}
+
+#pitchWrap:fullscreen #exitFullscreen {
+    display: inline-flex;
+}
+
+#pitchWrap:fullscreen .field-toolbar {
+    top: max(12px, env(safe-area-inset-top));
+    right: max(12px, env(safe-area-inset-right));
+}
+
+#pitchWrap:fullscreen .football-chat {
+    width: min(450px, 40vw);
+    bottom: max(18px, env(safe-area-inset-bottom));
+    left: max(18px, env(safe-area-inset-left));
+}
+
+#pitchWrap:fullscreen .football-chat .chat-log {
+    height: auto;
+    max-height: clamp(90px, 23dvh, 240px);
+    padding: 0;
+    border: 0;
+    background: transparent;
+    font-size: 13px;
+}
+
+#pitchWrap:fullscreen .football-chat .chat-form input {
+    background: #17301fa6;
+    color: #ffffff;
+}
+
+#pitchWrap:fullscreen .football-chat .chat-form input::placeholder {
+    color: #e4edddc7;
+}
+
+#pitchWrap:fullscreen .field-overlay-card,
+#pitchWrap:fullscreen .teams-card {
+    max-height: 100%;
+}
+
+.football-account-dialog::backdrop {
+    background: #050c08d9;
+    backdrop-filter: blur(2px);
+}
+
+@media (max-height: 600px) and (orientation: landscape) {
+    .entry-card {
+        padding: 13px 18px;
+    }
+    .entry-card h2 {
+        margin: 5px 0 7px;
+        font-size: 24px;
+    }
+    .entry-description {
+        font-size: 11px;
+    }
+    .entry-card .room-form {
+        margin-top: 12px;
+    }
+    .entry-card .room-form > button {
+        min-height: 35px;
+        padding-block: 7px;
+        font-size: 12px;
+    }
+    .pitch-overlay {
+        padding-top: 46px;
+        padding-bottom: 8px;
+    }
+}
+
+@media (pointer: coarse) {
+    .football-chat {
+        width: min(330px, calc(100% - 220px));
+        min-width: 100px;
+    }
+    .direction-pad {
+        grid-template-columns: repeat(3, 30px);
+        grid-template-rows: repeat(2, 30px);
+        gap: 4px;
+    }
+    .touch-button {
+        width: 30px;
+        height: 30px;
+    }
+    .touch-button > span {
+        font-size: 19px;
+    }
+    .touch-brake {
+        width: 35px;
+        height: 35px;
+    }
+    .touch-kick {
+        width: 45px;
+        height: 45px;
+    }
+    .action-pad {
+        gap: 6px;
+    }
+    .football-chat:focus-within {
+        width: min(420px, calc(100% - 24px));
+    }
+}
+
+@media (max-width: 760px) {
+    .below-pitch-controls {
+        grid-template-columns: minmax(0, 1fr);
+    }
+    .teams-card {
+        padding: 15px;
+    }
+    .team-lists {
+        column-gap: 14px;
+    }
+    .ready-controls {
+        gap: 10px;
+    }
+    #readyButton {
+        min-width: 110px;
+        padding-inline: 10px;
+    }
+}
+
+@media (max-width: 540px) {
+    .football-main {
+        padding-inline: 10px;
+    }
+    .page-heading {
+        margin-bottom: 15px;
+    }
+    .page-heading h1 {
+        font-size: 30px;
+    }
+    .page-description {
+        max-width: 205px;
+        font-size: 11px;
+    }
+    .field-toolbar {
+        top: 7px;
+        right: 7px;
+        left: 7px;
+        max-width: none;
+        display: grid;
+        grid-template-columns: max-content max-content minmax(0, 1fr) max-content max-content;
+        gap: 4px;
+    }
+    .field-tool {
+        grid-row: 1;
+        min-height: 25px;
+        padding: 5px 6px;
+        font-size: 9px;
+    }
+    #toggleTeams {
+        grid-column: 1;
+    }
+    #leaveRoom {
+        grid-column: 2;
+    }
+    #muteSound {
+        grid-column: 4;
+    }
+    #fullscreenToggle, #exitFullscreen {
+        grid-column: 5;
+    }
+    .pitch-overlay, .game-overlay {
+        padding: 42px 8px 9px;
+    }
+    .entry-card {
+        width: min(320px, 100%);
+        padding: 13px 16px;
+    }
+    .entry-card h2 {
+        margin: 5px 0 7px;
+        font-size: 23px;
+    }
+    .entry-description {
+        font-size: 11px;
+        line-height: 1.45;
+    }
+    .entry-card .room-form {
+        margin-top: 12px;
+    }
+    .entry-card .room-form > button {
+        min-height: 35px;
+        padding: 8px 11px;
+        font-size: 12px;
+    }
+    .entry-status {
+        margin-top: 8px;
+        font-size: 11px;
+    }
+    .room-heading {
+        align-items: flex-start;
+        gap: 10px;
+    }
+    .room-heading h2 {
+        margin-top: 3px;
+        font-size: 18px;
+    }
+    .room-heading-actions {
+        max-width: none;
+        flex-wrap: nowrap;
+        gap: 4px;
+    }
+    .room-heading-actions button {
+        min-height: 27px;
+        padding: 5px 7px;
+        font-size: 8px;
+    }
+    .team-preference-panel {
+        margin-top: 12px;
+        padding: 9px;
+    }
+    .team-preference-panel h3 {
+        margin-bottom: 8px;
+        font-size: 10px;
+    }
+    .team-preference-panel .section-description {
+        display: none;
+    }
+    .teams-card {
+        padding: 12px;
+    }
+    .preference-button {
+        min-height: 29px;
+        padding-block: 6px;
+        font-size: 11px;
+    }
+    .preference-random {
+        min-width: 120px;
+    }
+    .team-heading h3 {
+        font-size: 11px;
+    }
+    .team-heading button {
+        font-size: 9px;
+    }
+    .ready-controls {
+        flex-wrap: wrap;
+    }
+    #readySummary {
+        flex: 1 1 100%;
+    }
+    #readyButton {
+        width: 100%;
+    }
+    .football-chat {
+        left: 7px;
+        bottom: 7px;
+    }
+    .football-chat .chat-topline {
+        gap: 4px;
+        flex-wrap: wrap;
+    }
+    .football-chat .chat-filter-option {
+        font-size: 8px;
+    }
+    .football-chat .chat-log {
+        height: 53px;
+        padding: 5px;
+        font-size: 10px;
+    }
+    .football-chat .chat-form {
+        gap: 4px;
+    }
+    .football-chat .chat-form input {
+        height: 30px;
+        font-size: 16px;
+        padding-inline: 5px;
+    }
+    .football-chat .chat-form button {
+        font-size: 9px;
+        padding-inline: 5px;
+    }
+    .touch-controls {
+        right: 7px;
+        bottom: 8px;
+        gap: 8px;
+    }
+    #pitchWrap:fullscreen .field-toolbar {
+        left: max(8px, env(safe-area-inset-left));
+        right: max(8px, env(safe-area-inset-right));
+    }
+    #pitchWrap:fullscreen .football-chat {
+        left: max(8px, env(safe-area-inset-left));
+        bottom: max(10px, env(safe-area-inset-bottom));
+        width: min(42vw, 220px);
+    }
+    #pitchWrap:fullscreen .football-chat .chat-log {
+        height: auto;
+        max-height: 18dvh;
+        font-size: 11px;
+    }
+    #pitchWrap:fullscreen .football-chat:focus-within {
+        width: calc(100% - 16px);
+    }
+    .rockets-hud {
+        top: 42px;
+        max-width: 60%;
+        padding: 6px 8px;
+    }
+    #rocketTurnName {
+        font-size: 10px;
+    }
+    .rocket-turn-timer {
+        font-size: 19px;
+    }
+}

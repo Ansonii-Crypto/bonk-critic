@@ -1,7 +1,7 @@
 // The football page uses the site's account API without loading its page router.
-export function initFootballAccount({request, onSession, onLogout, onError}) {
+export function initFootballAccount({request, onSession, onLogout, onError, onLoginClosed, onLoginOpened}) {
     const root = document.querySelector('[data-football-account]');
-    let state = null, refreshVersion = 0;
+    let state = null, refreshVersion = 0, loggingOut = false, signingIn = false;
     const dialog = document.createElement('dialog');
     dialog.className = 'football-account-dialog';
     dialog.setAttribute('aria-labelledby', 'footballLoginTitle');
@@ -14,11 +14,18 @@ export function initFootballAccount({request, onSession, onLogout, onError}) {
             <p id="footballLoginError" role="status" aria-live="polite"></p>
             <div class="football-account-actions"><button type="button" class="button-secondary" data-close-login>Cancel</button><button type="submit" class="button-primary">Sign in</button></div>
         </form>`;
-    document.getElementById('footballApp').append(dialog);
+    (document.getElementById('pitchWrap') || document.getElementById('footballApp')).append(dialog);
     const form = dialog.querySelector('form'), password = form.elements.password;
-    dialog.querySelector('[data-close-login]').onclick = () => dialog.close();
-    dialog.addEventListener('close', () => {password.value = '';});
-    dialog.addEventListener('click', event => {if (event.target === dialog) dialog.close();});
+    const cancel = dialog.querySelector('[data-close-login]');
+    cancel.onclick = () => {if (!signingIn) dialog.close();};
+    dialog.addEventListener('cancel', event => {if (signingIn) event.preventDefault();});
+    dialog.addEventListener('close', () => {password.value = ''; onLoginClosed?.();});
+    dialog.addEventListener('click', event => {
+        if (event.target !== dialog || signingIn) return;
+        const bounds = dialog.getBoundingClientRect();
+        if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) dialog.close();
+    });
+    const openLogin = () => {onLoginOpened?.(); dialog.querySelector('[role="status"]').textContent = ''; if (!dialog.open) dialog.showModal();};
 
     function saveSession(token) {
         try {
@@ -34,7 +41,7 @@ export function initFootballAccount({request, onSession, onLogout, onError}) {
         if (!user) {
             const button = document.createElement('button'); button.type = 'button';
             button.className = 'account-open-login'; button.textContent = 'Account';
-            button.onclick = () => {dialog.querySelector('[role="status"]').textContent = ''; dialog.showModal();};
+            button.onclick = openLogin;
             root.append(button); return;
         }
         const menu = document.createElement('details'), summary = document.createElement('summary');
@@ -58,17 +65,19 @@ export function initFootballAccount({request, onSession, onLogout, onError}) {
         }
         const logout = document.createElement('button'); logout.type = 'button'; logout.className = 'account-logout'; logout.textContent = 'Log out';
         logout.onclick = async () => {
-            logout.disabled = true;
+            logout.disabled = true; loggingOut = true; refreshVersion++;
             try {
                 await request('/api/bonk/logout', {}); saveSession(null); state = null;
                 await onLogout?.(); draw(); await onSession?.(null, 'logout');
             } catch (error) {onError?.(error.message); logout.disabled = false;}
+            finally {loggingOut = false;}
         };
         options.append(logout); menu.append(options); root.append(menu);
         options.querySelectorAll('a').forEach(link => link.addEventListener('click', () => {menu.open = false;}));
     }
 
     async function refresh(reason = 'refresh') {
+        if (loggingOut) return state;
         const ownVersion = ++refreshVersion;
         try {
             const next = await request('/api/session');
@@ -84,17 +93,17 @@ export function initFootballAccount({request, onSession, onLogout, onError}) {
         event.preventDefault();
         const button = form.querySelector('[type="submit"]'), status = form.querySelector('[role="status"]');
         if (button.disabled) return;
-        button.disabled = true; status.textContent = 'Signing in…';
+        button.disabled = true; cancel.disabled = true; signingIn = true; status.textContent = 'Signing in…';
         try {
             const result = await request('/api/bonk/login', {username: form.elements.username.value.trim(), password: password.value});
             password.value = ''; saveSession(result.account_session_token);
             await refresh('login'); if (dialog.open) dialog.close();
         } catch (error) {status.textContent = error.message;}
-        finally {password.value = ''; button.disabled = false;}
+        finally {password.value = ''; button.disabled = false; cancel.disabled = false; signingIn = false;}
     });
     document.addEventListener('click', event => {const menu = root.querySelector('details'); if (menu && !root.contains(event.target)) menu.open = false;});
     document.addEventListener('keydown', event => {const menu = root.querySelector('details'); if (event.key === 'Escape' && menu?.open) {menu.open = false; menu.querySelector('summary').focus();}});
     window.addEventListener('focus', () => {void refresh();});
     draw();
-    return {refresh};
+    return {refresh, openLogin};
 }

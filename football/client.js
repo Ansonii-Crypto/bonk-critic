@@ -3,7 +3,9 @@ import {DEFAULT_MATCH_SETTINGS, SETTING_RULES, validateMatchSettings} from './se
 import {FOOTBALL_MODES, ballSpeed} from './modes.js?v=20261126-football-5';
 import {maskProfanity} from './chat-filter.js?v=20261127-football-6';
 import {DEFAULT_KEYBINDS, BINDING_ACTIONS, validateKeybinds, canonicalBindingCode} from './keybinds.js?v=20261127-football-6';
-import {initFootballAccount} from './account-menu.js?v=20261127-football-6';
+import {initFootballAccount} from './account-menu.js?v=20261127-football-7';
+import {FootballWatcher} from './watcher.js?v=20261127-football-7';
+import {FreeplayScene} from './freeplay.js?v=20261127-football-7';
 
 const $ = id => document.getElementById(id);
 const canvas = $('footballCanvas');
@@ -15,6 +17,7 @@ const keys = new Map();
 const held = new Set();
 const touches = new Map();
 const physics = new FootballPhysics();
+const freeplay = new FreeplayScene();
 let room = null, memberId = null, socket = null, ready = false, sequence = 0;
 let flags = 0, busy = false, leaving = false, generation = 0, retries = 0, retryTimer;
 let lastState = null, predicted = null, snapshots = [], lastInputs = [];
@@ -24,6 +27,7 @@ let notice = '', noticeUntil = 0, latestStatus = '', lastScores = [0, 0, 0, 0];
 let account = null, reconnecting = false;
 let settingsDirty = false, settingsSignature = '', pendingSettingsSignature = null, geometrySignature = '';
 let leaderboardSignature = '', serverClockOffset = 0;
+let teamsOpen = false, joinAfterLogin = false, selectedPreference = 0, accountLoaded = false;
 let activeBindings = copyBindings(DEFAULT_KEYBINDS), draftBindings = copyBindings(DEFAULT_KEYBINDS), capturingKey = null;
 const bindingLabels = {left: 'Left', right: 'Right', up: 'Up', down: 'Down', action: 'Kick', action2: 'Brake'};
 const chatMessages = [];
@@ -104,11 +108,20 @@ function loadAccountPreferences(user) {
     let filter = typeof provider?.filterProfanity === 'boolean' ? provider.filterProfanity : true;
     try {const savedFilter = localStorage.getItem('football-profanity-filter'); if (savedFilter !== null) filter = savedFilter === 'true';} catch {}
     $('filterProfanity').checked = filter; renderChat();
+    try {selectedPreference = Number(localStorage.getItem('football-preferred-team:' + (user?.id || 'viewer')) || 0);} catch {selectedPreference = 0;}
+    if (![0, 2, 3].includes(selectedPreference)) selectedPreference = 0;
+}
+
+function setTeamPreference(team) {
+    selectedPreference = team;
+    try {localStorage.setItem('football-preferred-team:' + (account?.id || 'viewer'), String(team));} catch {}
+    if (memberId) send({type: 'preference', team});
+    renderGamePanels();
 }
 
 function setText(node, text) {
     if (node && node.textContent !== String(text)) node.textContent = String(text);
-    if (node?.id === 'connectionStatus') node.dataset.state = String(text).startsWith('Connected') ? 'connected' : 'error';
+    if (node?.id === 'connectionStatus') node.dataset.state = /^(Connected|Watching)/.test(String(text)) ? 'connected' : 'error';
 }
 
 function showNotice(text) {
@@ -239,17 +252,34 @@ function acceptState(state, serverTick = 0, inputs = []) {
     updateMatchStatus();
 }
 
+function acceptSnapshot(message) {
+    if (room) {
+        room.status = message.status || room.status; room.mode = message.mode || room.mode; room.winner = message.winner ?? room.winner;
+        if (Object.hasOwn(message, 'rockets')) room.rockets = message.rockets;
+        if (Object.hasOwn(message, 'rebalanceVote')) room.rebalanceVote = message.rebalanceVote;
+    }
+    if (Number.isFinite(message.serverTime)) serverClockOffset = message.serverTime - Date.now();
+    acceptState(message.state, message.tick, message.inputs);
+}
+
+const watcher = new FootballWatcher({
+    api: API,
+    onRoom: next => {if (!memberId) applyRoom(next);},
+    onSnapshot: message => {if (!memberId) acceptSnapshot(message);},
+    onStatus: connected => {if (!memberId) setText($('connectionStatus'), connected ? 'Watching live' : 'Preview · reconnecting…');},
+});
+
 function addChat(message) {
-    if (!message || seenChat.has(message.id)) return;
+    if (!memberId || !message || seenChat.has(message.id)) return;
     seenChat.add(message.id);
-    if (seenChat.size > 120) seenChat.delete(seenChat.values().next().value);
+    if (seenChat.size > 400) seenChat.delete(seenChat.values().next().value);
     chatMessages.push(message);
-    if (chatMessages.length > 40) chatMessages.shift();
+    if (chatMessages.length > 200) chatMessages.shift();
     renderChat();
 }
 
 function renderChat() {
-    const log = $('chatLog'), nearBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 45;
+    const log = $('chatLog'), previousScroll = log.scrollTop, nearBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 45;
     log.replaceChildren();
     for (const message of chatMessages) {
         const row = document.createElement('p'), author = document.createElement('strong');
@@ -258,8 +288,27 @@ function renderChat() {
         const text = $('filterProfanity').checked ? maskProfanity(message.text || '') : message.text || '';
         row.append(author, document.createTextNode(text)); log.append(row);
     }
-    if (nearBottom) log.scrollTop = log.scrollHeight;
+    if (log.clientWidth) {
+        const lineCounts = [...log.children].map(row => {
+            const style = getComputedStyle(row), lineHeight = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.5;
+            const inset = ['paddingTop', 'paddingBottom', 'borderTopWidth', 'borderBottomWidth'].reduce((sum, key) => sum + (parseFloat(style[key]) || 0), 0);
+            return Math.max(1, Math.round((row.getBoundingClientRect().height - inset) / lineHeight));
+        });
+        let total = lineCounts.reduce((sum, value) => sum + value, 0), removed = 0;
+        while (total > 200 && removed < lineCounts.length) total -= lineCounts[removed++];
+        chatMessages.splice(0, removed);
+        for (let index = 0; index < removed; index++) log.firstElementChild.remove();
+    }
+    log.scrollTop = nearBottom ? log.scrollHeight : previousScroll;
 }
+
+let chatWidth = 0;
+new ResizeObserver(() => {
+    const width = $('chatLog').clientWidth;
+    if (!width || width === chatWidth) return;
+    chatWidth = width;
+    if (chatMessages.length) renderChat();
+}).observe($('chatLog'));
 
 function renderRoster(team, target) {
     target.replaceChildren();
@@ -322,14 +371,31 @@ function renderQueue() {
 }
 
 function renderGamePanels() {
-    const voting = room?.status === 'voting' && !!room.vote;
-    const results = room?.status === 'results' && !!room.results;
+    const joined = !!memberId;
+    const voting = joined && room?.status === 'voting' && !!room.vote;
+    const results = joined && room?.status === 'results' && !!room.results;
     const playing = room?.status === 'playing';
     const me = self(), eligible = !!(me?.connected && (me.team || me.queued));
+    $('roomEntry').hidden = joined;
+    $('roomPanel').hidden = !joined;
+    $('teamsOverlay').hidden = !joined || !teamsOpen || voting || results;
+    $('toggleTeams').setAttribute('aria-expanded', String(!$('teamsOverlay').hidden));
+    $('footballChat').hidden = !joined;
+    $('toggleTeams').hidden = !joined;
+    $('leaveRoom').hidden = !joined;
+    $('pitchWrap').classList.toggle('is-in-room', joined);
+    setText($('entryTitle'), account ? 'Join the game' : 'Sign in to play');
+    setText($('entryDescription'), account ? 'Take your place on the shared pitch. You will join at the next kickoff.' : 'Sign in to take your place on the shared pitch.');
+    setText($('joinGameButton'), account ? 'Join game' : 'Sign in to join');
+    $('joinGameButton').disabled = busy;
+    for (const [id, team] of [['preferBlue', 3], ['preferRed', 2], ['preferRandom', 0]]) $(id).setAttribute('aria-pressed', String(selectedPreference === team));
+    const preferenceHint = $('teamPreferencePanel').querySelector('.section-description');
+    const pendingRocketSide = room?.mode === 'rockets' && room.rockets?.attackerId === memberId && room.rockets.sideChangeUsed && selectedPreference && selectedPreference !== room.rockets.attackerTeam;
+    setText(preferenceHint, pendingRocketSide ? 'Your next turn will use this preference. One side change is allowed per turn.' : room?.mode === 'rockets' ? 'Choose your shooting side. You can change sides once during your turn.' : 'Teams stay balanced; your preference applies when possible.');
     $('gameOverlay').hidden = !voting && !results;
     $('modeVotePanel').hidden = !voting;
     $('resultsPanel').hidden = !results;
-    $('rebalanceNotice').hidden = !playing || !room?.rebalanceVote;
+    $('rebalanceNotice').hidden = !joined || !playing || !room?.rebalanceVote;
     $('rocketsHud').hidden = !playing || room?.mode !== 'rockets' || !room.rockets;
     $('votingWaiting').hidden = !voting;
     if (voting) {
@@ -381,7 +447,7 @@ function renderGamePanels() {
     }
     if (playing && room.mode === 'rockets' && room.rockets) {
         const turn = room.rockets, attacker = room.members.find(member => member.id === turn.attackerId);
-        setText($('rocketTurnName'), (attacker?.name || 'Next player') + ' · Turn ' + turn.turnIndex + '/' + turn.totalTurns);
+        setText($('rocketTurnName'), (attacker?.name || 'Next player') + ' · ' + teamName(turn.attackerTeam || 3) + ' · Turn ' + turn.turnIndex + '/' + turn.totalTurns);
         setText($('rocketTurnTimer'), Math.ceil(Math.max(0, turn.turnTicksLeft) / C.TICK_RATE) + 's');
     }
 }
@@ -417,14 +483,15 @@ function updateSettings() {
 function applyRoom(next) {
     if (!next) return;
     const oldStatus = room?.status, oldAttacker = room?.rockets?.attackerId; room = next;
+    if (oldStatus !== 'playing' && room.status === 'playing') teamsOpen = false;
     if (settingsFingerprint(room.settings) === pendingSettingsSignature) {settingsDirty = false; pendingSettingsSignature = null;}
     if (oldStatus !== room.status || oldAttacker !== room.rockets?.attackerId) {releaseInput(); snapshots = []; smoothing.clear(); predicted = null;}
-    $('roomEntry').hidden = true; $('roomPanel').hidden = false;
     setText($('roomTitle'), room.name); setText($('roomCodeDisplay'), room.id);
     history.replaceState(null, '', location.pathname);
     renderRoster(3, $('blueRoster')); renderRoster(2, $('redRoster')); renderRoster(0, $('spectatorRoster'));
     renderQueue();
     const admin = !!self()?.admin, playing = room.status === 'playing', me = self();
+    if (me && [0, 2, 3].includes(me.preferredTeam)) selectedPreference = me.preferredTeam;
     $('hostControls').hidden = !admin;
     $('adminMatchControls').hidden = !admin;
     updateSettings(); syncPitch(room.state);
@@ -435,10 +502,7 @@ function applyRoom(next) {
     $('startMatch').disabled = !canStart || !isOpen(); $('rematchMatch').disabled = !canStart || !isOpen();
     setText($('modeLabel'), modeName());
     setText($('lobbyStateLabel'), room.status === 'playing' ? 'IN GAME' : room.status === 'voting' ? 'VOTING' : room.status === 'results' ? 'RESULTS' : 'LOBBY');
-    for (const [id, team] of [['joinBlue', 3], ['joinRed', 2], ['spectate', 0]]) {
-        $(id).disabled = !isOpen() || (team ? me?.team === team || (me?.queued && me.queueTeam === team) : !me?.team && !me?.queued);
-        $(id).textContent = team ? playing ? 'Queue ' + teamName(team).toLowerCase() : 'Join ' + teamName(team).toLowerCase() : 'Spectate';
-    }
+    $('spectate').disabled = !isOpen() || !me?.team && !me?.queued;
     $('joinQueue').disabled = !isOpen() || !!me?.team || (!!me?.queued && !me.queueTeam);
     const readyEligible = !!(me?.connected && (me.team || (room.mode === 'rockets' && me.queued)));
     $('readyButton').disabled = !isOpen() || room.status !== 'lobby' || !readyEligible;
@@ -452,7 +516,7 @@ function applyRoom(next) {
             : me?.queued ? 'You will join at the next kickoff with an available place.' : 'Players can vote to rebalance if someone leaves.'
         : !active.length ? 'Join the queue to play.' : waiting ? active.filter(member => member.ready).length + ' / ' + active.length + ' ready.' + (active.length === 1 ? ' You can practise solo.' : ' Everyone playing must be ready.') : 'Everyone is ready. Starting…');
     $('chatInput').disabled = !isOpen(); $('sendChat').disabled = !isOpen();
-    for (const message of room.chat || []) addChat(message);
+    freeplay.setSettings(room.settings);
     if (room.state) acceptState(room.state, tick, lastInputs);
     else {
         lastState = null; predicted = null; snapshots = []; lastScores = [0, 0, 0, 0];
@@ -467,7 +531,8 @@ function applyRoom(next) {
 
 function updateMatchStatus() {
     let text = 'Join football to play or watch the shared game.';
-    if (room) {
+    if (!memberId) text = account ? 'Watching the pitch. Join when you are ready.' : 'Watch the pitch, then sign in to join.';
+    else if (room) {
         const me = self();
         const role = me?.team ? 'Playing for ' + teamName(me.team) : me?.queued ? 'Queue position ' + me.queuePosition : 'Spectating';
         if (!ready) text = reconnecting ? 'Connection interrupted. Reconnecting…' : 'Connecting to room…';
@@ -488,6 +553,7 @@ function updateMatchStatus() {
 }
 
 async function connectSession(joined) {
+    watcher.stop(); teamsOpen = true;
     const ownGeneration = ++generation;
     clearTimeout(retryTimer); retryTimer = null;
     socket?.close(1000, 'Replaced connection');
@@ -510,13 +576,7 @@ async function connectSession(joined) {
                 if (!settled) {settled = true; clearTimeout(timeout); resolve();}
             } else if (message.type === 'room') applyRoom(message.room);
             else if (message.type === 'snapshot') {
-                if (room) {
-                    room.status = message.status || room.status; room.mode = message.mode || room.mode; room.winner = message.winner ?? room.winner;
-                    if (Object.hasOwn(message, 'rockets')) room.rockets = message.rockets;
-                    if (Object.hasOwn(message, 'rebalanceVote')) room.rebalanceVote = message.rebalanceVote;
-                }
-                if (Number.isFinite(message.serverTime)) serverClockOffset = message.serverTime - Date.now();
-                acceptState(message.state, message.tick, message.inputs);
+                acceptSnapshot(message);
             } else if (message.type === 'chat') addChat(message);
             else if (message.type === 'notice') showNotice(message.text || 'Lobby updated.');
             else if (message.type === 'removed') {
@@ -549,7 +609,7 @@ async function connectSession(joined) {
 async function join(id, resume = false) {
     const seat = resume ? savedSeat(id) : null;
     const joined = await request('/api/football/lobby', {
-        displayName: $('displayName').value.trim(), ...(seat?.resumeToken ? {resumeToken: seat.resumeToken} : {})
+        displayName: account?.username || $('displayName').value.trim(), preferredTeam: selectedPreference, ...(seat?.resumeToken ? {resumeToken: seat.resumeToken} : {})
     });
     await connectSession(joined);
 }
@@ -565,7 +625,10 @@ function scheduleReconnect() {
     retryTimer = setTimeout(async () => {
         retryTimer = null;
         try {await join(id, true);} catch (error) {
-            if (error.status === 404 || error.status === 403) {storeSeat(id, null); returnToEntry(error.message);}
+            if ([401, 403, 404].includes(error.status)) {
+                storeSeat(id, null); returnToEntry(error.status === 401 ? 'Sign in again to rejoin the game.' : error.message);
+                if (error.status === 401) {account = null; accountLoaded = false; void accountMenu.refresh();}
+            }
             else scheduleReconnect();
         }
     }, Math.min(5000, 500 * 2 ** retries));
@@ -576,13 +639,12 @@ function returnToEntry(message = '') {
     retries = 0;
     clearTimeout(retryTimer); retryTimer = null;
     releaseInput(); socket?.close(1000, 'Left room'); socket = null;
-    $('roomPanel').hidden = true; $('roomEntry').hidden = false;
     $('entryStatus').textContent = message; setText($('connectionStatus'), 'Not connected');
-    room = null; memberId = null; lastState = null; predicted = null; snapshots = []; smoothing.clear();
+    memberId = null; teamsOpen = false; predicted = null; smoothing.clear();
     seenChat.clear(); chatMessages.length = 0; $('chatLog').replaceChildren();
     $('hostControls').hidden = true; $('adminMatchControls').hidden = true; $('chatInput').disabled = true; $('sendChat').disabled = true;
     settingsSignature = ''; settingsDirty = false; pendingSettingsSignature = null; leaderboardSignature = '';
-    syncPitch(null); setBusy(false); renderGamePanels(); updateMatchStatus();
+    syncPitch(room?.state || null); setBusy(false); renderGamePanels(); updateMatchStatus(); watcher.start();
 }
 
 async function entryAction(action) {
@@ -591,14 +653,30 @@ async function entryAction(action) {
     try {
         try {localStorage.setItem('football-display-name', $('displayName').value.trim());} catch {}
         await action(); canvas.focus({preventScroll: true});
-    } catch (error) {returnToEntry(error.message);}
+    } catch (error) {
+        if ([403, 404].includes(error.status)) storeSeat(LOBBY_ID, null);
+        if (error.status === 401) {account = null; accountLoaded = false; void accountMenu.refresh();}
+        returnToEntry(error.message);
+    }
     finally {setBusy(false);}
 }
 
-$('joinRoomForm').addEventListener('submit', event => {event.preventDefault(); entryAction(() => join(LOBBY_ID, true));});
+async function joinFromEntry() {
+    if (!accountLoaded) await accountMenu.refresh('join-check');
+    if (!account) {joinAfterLogin = true; accountMenu.openLogin(); return;}
+    joinAfterLogin = false;
+    await entryAction(async () => {
+        try {await join(LOBBY_ID, true);}
+        catch (error) {if ([403, 404].includes(error.status)) {storeSeat(LOBBY_ID, null); await join(LOBBY_ID, false);} else throw error;}
+    });
+}
+$('joinRoomForm').addEventListener('submit', event => {event.preventDefault(); void joinFromEntry();});
 $('leaveRoom').addEventListener('click', () => {send({type: 'leave'}); storeSeat(room?.id, null); returnToEntry(); history.replaceState(null, '', location.pathname);});
-for (const [id, team] of [['joinBlue', 3], ['joinRed', 2], ['spectate', 0]]) $(id).addEventListener('click', () => send({type: 'team', team}));
-$('joinQueue').addEventListener('click', () => send({type: 'queue', team: 0}));
+$('spectate').addEventListener('click', () => send({type: 'spectate'}));
+for (const [id, team] of [['preferBlue', 3], ['preferRed', 2], ['preferRandom', 0]]) $(id).addEventListener('click', () => setTeamPreference(team));
+$('toggleTeams').addEventListener('click', () => {releaseInput(); teamsOpen = !teamsOpen; renderGamePanels();});
+$('closeTeams').addEventListener('click', () => {teamsOpen = false; renderGamePanels(); canvas.focus({preventScroll: true});});
+$('joinQueue').addEventListener('click', () => send({type: 'queue', team: selectedPreference}));
 $('readyButton').addEventListener('click', () => {warmAudio(); send({type: 'ready', ready: !self()?.ready});});
 for (const button of document.querySelectorAll('[data-mode-vote]')) button.addEventListener('click', () => {
     releaseInput(); send({type: 'modeVote', mode: button.dataset.modeVote});
@@ -633,10 +711,15 @@ $('chatForm').addEventListener('submit', event => {
     if (text && send({type: 'chat', text})) {$('chatInput').value = ''; canvas.focus({preventScroll: true});}
 });
 $('fullscreenToggle').addEventListener('click', async () => {
-    try {if (document.fullscreenElement) await document.exitFullscreen(); else await $('footballApp').requestFullscreen(); canvas.focus({preventScroll: true});}
+    try {if (document.fullscreenElement) await document.exitFullscreen(); else await $('pitchWrap').requestFullscreen({navigationUI: 'hide'}); canvas.focus({preventScroll: true});}
     catch {showNotice('Fullscreen is unavailable in this browser.');}
 });
-document.addEventListener('fullscreenchange', () => setText($('fullscreenToggle'), document.fullscreenElement ? 'Exit fullscreen' : 'Fullscreen'));
+$('exitFullscreen').addEventListener('click', () => {if (document.fullscreenElement) void document.exitFullscreen();});
+document.addEventListener('fullscreenchange', () => {
+    setText($('fullscreenToggle'), document.fullscreenElement ? 'Exit fullscreen' : 'Fullscreen');
+    $('exitFullscreen').hidden = !document.fullscreenElement;
+    requestAnimationFrame(() => {resizeCanvas(); renderChat();});
+});
 $('muteSound').addEventListener('click', () => {muted = !muted; $('muteSound').setAttribute('aria-pressed', String(muted)); setText($('muteSound'), muted ? 'Sound off' : 'Sound on'); if (!muted) warmAudio();});
 canvas.addEventListener('pointerdown', () => {canvas.focus({preventScroll: true}); warmAudio();});
 window.addEventListener('keydown', event => {
@@ -651,7 +734,7 @@ window.addEventListener('keydown', event => {
 }, true);
 window.addEventListener('keydown', event => {
     if (event.code === 'Escape') releaseInput();
-    if (event.code === 'Enter' && !editable(event.target) && room) {event.preventDefault(); releaseInput(); $('chatInput').focus(); return;}
+    if (event.code === 'Enter' && !editable(event.target) && memberId) {event.preventDefault(); releaseInput(); $('chatInput').focus(); return;}
     if (event.code === 'Escape' && event.target === $('chatInput')) {releaseInput(); canvas.focus({preventScroll: true}); return;}
     if (!keys.has(canonicalBindingCode(event.code)) || editable(event.target) || !isOpen() || !self()?.team) return;
     event.preventDefault(); held.add(event.code); updateInput(); warmAudio();
@@ -774,12 +857,14 @@ function draw(now) {
             predicted = physics.step(predicted, predictionInput()); lastPredictionAt += 1000 / C.TICK_RATE; predictionSteps++;
         }
     }
+    const live = lastState && (memberId || now - lastSnapshotAt < 1500);
+    const display = live ? interpolated(now) : freeplay.step(now), authoritative = live ? lastState : null;
+    if (!live) syncPitch(display);
     context.setTransform(1, 0, 0, 1, 0, 0);
     context.drawImage(pitch, 0, 0);
     context.setTransform(viewport.ratio, 0, 0, viewport.ratio, 0, 0);
     context.translate(viewport.x, viewport.y); context.scale(viewport.scale, viewport.scale);
     const g = geometry.pixels;
-    const display = interpolated(now), authoritative = lastState;
     const scores = authoritative?.scores || [0, 0, 0, 0];
     context.fillStyle = '#ffffff'; context.textBaseline = 'middle';
     context.shadowColor = 'rgba(0,0,0,.35)'; context.shadowBlur = 4; context.shadowOffsetY = 2;
@@ -797,11 +882,11 @@ function draw(now) {
             context.fillStyle = blue ? '#2d69b2' : '#ad3636'; context.fill();
             const action = slot === ownSlot ? flags & 16 : (lastInputs[slot] || 0) & 16;
             context.strokeStyle = action ? '#ffffff' : blue ? '#448aff' : '#d32f2f'; context.lineWidth = 2.5; context.stroke();
-            const member = room?.members.find(member => member.slot === slot);
+            const member = live ? room?.members.find(member => member.slot === slot) : null;
             context.fillStyle = '#ffffff'; context.font = 'bold 9px Arial, sans-serif'; context.textAlign = 'center';
-            context.fillText(Array.from(member?.name || '?')[0].toUpperCase(), x, y + 0.5);
+            context.fillText(Array.from(member?.name || display.players?.[slot]?.name || '?')[0].toUpperCase(), x, y + 0.5);
             context.font = '9px Arial, sans-serif'; context.fillStyle = 'rgba(255,255,255,.9)';
-            context.fillText(member?.name || authoritative.players[slot]?.name || 'Player', x, y + g.playerRadius + 11, 105);
+            context.fillText(member?.name || display.players?.[slot]?.name || 'Player', x, y + g.playerRadius + 11, 105);
             if (slot === ownSlot) {context.beginPath(); context.moveTo(x - 3, y + g.playerRadius + 18); context.lineTo(x + 3, y + g.playerRadius + 18); context.lineTo(x, y + g.playerRadius + 14); context.closePath(); context.fill();}
         });
         const ball = predicted?.ball && self()?.team ? smoothed('ball', predicted.ball, dt) : display.ball;
@@ -819,7 +904,8 @@ function draw(now) {
         }
     }
     let banner = '', caption = '';
-    if (!room) {banner = 'FOOTBALL'; caption = 'One pitch. Join the lobby and play.';}
+    if (!memberId) {banner = ''; caption = '';}
+    else if (!room) {banner = 'FOOTBALL'; caption = 'Join the lobby and play.';}
     else if (!ready) {banner = reconnecting ? 'RECONNECTING' : 'CONNECTING'; caption = 'Waiting for the room…';}
     else if (room.status === 'voting' || room.status === 'results') {banner = ''; caption = '';}
     else if (room.status === 'lobby') {banner = 'LOBBY'; caption = 'Join a team. Ready up to start.';}
@@ -846,25 +932,31 @@ loadAccountPreferences(null);
 const accountMenu = initFootballAccount({
     request,
     onSession: async (session, reason) => {
-        const previousId = account?.id; account = session?.user || null;
+        const previousId = account?.id; account = session?.user || null; accountLoaded = true;
         if (reason === 'initial' || reason === 'login' || previousId !== account?.id) loadAccountPreferences(account);
         $('displayName').readOnly = !!account;
         if (account) {$('displayName').value = account.username; $('displayName').title = 'Using your verified Bonk account';}
         else {$('displayName').title = '';}
-        if (reason === 'login' && room) {
+        if (reason === 'login' && memberId) {
             if (previousId && previousId !== account?.id) {send({type: 'leave'}); storeSeat(room.id, null); returnToEntry();}
             await entryAction(() => join(LOBBY_ID, true));
-        } else if (reason === 'refresh' && previousId && previousId !== account?.id && room) {
+        } else if (reason === 'login' && joinAfterLogin) {
+            await joinFromEntry();
+        } else if (reason === 'refresh' && previousId && previousId !== account?.id && memberId) {
             send({type: 'leave'}); storeSeat(room.id, null); returnToEntry('Your account changed. Join again to continue.');
         }
+        renderGamePanels();
     },
-    onLogout: async () => {if (room) {send({type: 'leave'}); storeSeat(room.id, null); returnToEntry();}},
+    onLogout: async () => {if (memberId) {send({type: 'leave'}); storeSeat(room.id, null); returnToEntry();}},
     onError: showNotice,
+    onLoginClosed: () => {joinAfterLogin = false;},
+    onLoginOpened: () => {releaseInput(); if (capturingKey) {capturingKey = null; renderBindingFields();}},
 });
 $('footballApp').dataset.ready = 'true';
+watcher.start();
 (async () => {
     await accountMenu.refresh('initial');
-    if (savedSeat(LOBBY_ID)?.resumeToken) {
+    if (account && savedSeat(LOBBY_ID)?.resumeToken) {
         try {
             await entryAction(() => join(LOBBY_ID, true));
         } catch (error) {$('entryStatus').textContent = error.message;}

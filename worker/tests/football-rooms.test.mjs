@@ -30,7 +30,7 @@ class Storage {
 function context(storage = new Storage()) {return {storage, pending:[], blockConcurrencyWhile(callback) {return callback();}, waitUntil(promise) {this.pending.push(promise);}};}
 function environment() {
     const db = new DatabaseSync(':memory:'); db.exec(readFileSync(new URL('../schema.sql', import.meta.url), 'utf8'));
-    const env = {ALLOWED_ORIGIN:origin, objects:new Map(), db, API_RATE_LIMITER:{async limit() {return {success:true};}}, LOGIN_RATE_LIMITER:{async limit() {return {success:true};}}};
+    const env = {ALLOWED_ORIGIN:origin, objects:new Map(), db, nextIdentity:1000, API_RATE_LIMITER:{async limit() {return {success:true};}}, LOGIN_RATE_LIMITER:{async limit() {return {success:true};}}};
     env.DB = {prepare(sql) {return {bind(...args) {const statement = db.prepare(sql); return {async first() {return statement.get(...args) || null;}, async run() {return {meta:{changes:Number(statement.run(...args).changes)}};}};}};}};
     env.FOOTBALL_ROOMS = {idFromName:id => id, get(id) {if (!env.objects.has(id)) env.objects.set(id, new FootballRoom(context(), env)); return env.objects.get(id);}};
     return env;
@@ -51,14 +51,22 @@ async function administrator(env, suffix = 'a') {
 function request(env, path = '/lobby', body, identity = null, headers = {}) {
     return footballApi(new Request('https://api.test/api/football' + path, {method:body === undefined ? 'GET' : 'POST', headers:{Origin:origin, 'Content-Type':'application/json', ...headers}, ...(body === undefined ? {} : {body:JSON.stringify(body)})}), env, identity);
 }
-async function join(env, name = 'Player', {identity = null, extra = {}, path = '/lobby'} = {}) {
+async function join(env, name = 'Player', {identity, extra = {}, path = '/lobby'} = {}) {
+    if (identity === undefined) {
+        const tokenHash = extra.resumeToken ? await hash(extra.resumeToken) : null, resumed = tokenHash ? roomOf(env)?.room?.members.find(item => item.resumeHash === tokenHash) : null;
+        identity = {username:resumed?.name || name, bonkId:resumed?.bonkId || String(env.nextIdentity++)};
+    }
     const response = await request(env, path, {displayName:name, ...extra}, identity); return {response, data:await response.json()};
 }
 async function connect(env, data, headers = {}) {
     const response = await request(env, data.socketPath.replace('/api/football', ''), undefined, null, {Upgrade:'websocket', ...headers}); assert.equal(response.status, 101); return response.webSocket;
 }
+async function watch(env) {
+    const response = await request(env, '/watch', undefined, null, {Upgrade:'websocket'}); assert.equal(response.status, 101);
+    const room = roomOf(env), connection = [...room.watchers.values()].at(-1); return {socket:response.webSocket, connection};
+}
 async function member(env, name, identity = null, {vote = true} = {}) {
-    const {response, data} = await join(env, name, {identity}); assert.equal(response.status, 200); const socket = await connect(env, data), result = {...data, socket};
+    const {response, data} = await join(env, name, {identity:identity || undefined}); assert.equal(response.status, 200); const socket = await connect(env, data), result = {...data, socket};
     if (vote && roomOf(env).room.status === 'voting') await command(roomOf(env), result, {type:'modeVote', mode:'balanced'});
     return result;
 }
@@ -77,19 +85,20 @@ async function rocketsMatch(env, count = 2) {
     room.stopTimer(); assert.equal(room.room.status, 'playing'); assert.equal(room.room.mode, 'rockets'); return {room, members};
 }
 
-test('all legacy room links and lobby requests resolve to one guest-safe shared hub', async () => {
+test('all legacy room links resolve to one shared hub while unsigned and forged guest joins are denied', async () => {
     const env = environment();
     try {
         const empty = await (await request(env)).json(); assert.equal(empty.room.id, ID); assert.deepEqual(empty.room.members, []);
+        const denied = await request(env, '/rooms', {displayName:'Guest', identity:{username:'Forged', bonkId:'123'}, admin:true}); assert.equal(denied.status, 401); assert.deepEqual(await denied.json(), {error:'Sign in with your Bonk account to join.'});
         const first = (await join(env, 'Guest', {path:'/rooms', extra:{name:'Private room', admin:true, identity:{username:'Forged', bonkId:'123'}}})).data;
         const second = (await join(env, 'Other', {path:'/rooms/old-private-code/join'})).data;
-        assert.equal(first.room.id, second.room.id); assert.equal(env.objects.size, 1); assert.equal(first.room.members[0].admin, false); assert.equal(first.room.members[0].verified, false);
+        assert.equal(first.room.id, second.room.id); assert.equal(env.objects.size, 1); assert.equal(first.room.members[0].admin, false); assert.equal(first.room.members[0].verified, true);
         assert.equal(first.room.hostId, null); assert.equal(first.room.members[0].host, false);
         assert.doesNotMatch(JSON.stringify(second.room), /resumeHash|resumeToken|bonkId|SessionHash|adminContext/);
     } finally {cleanup(env);}
 });
 
-test('first guests have no admin power; balanced players ready up to auto-start', async () => {
+test('signed-in ordinary players have no admin power and ready up to auto-start', async () => {
     const env = environment();
     try {
         const first = await member(env, 'First'), second = await member(env, 'Second'), room = roomOf(env);
@@ -120,7 +129,7 @@ test('worker auth wiring ignores claimed admin, rejects mismatched paired sessio
     try {
         const auth = await administrator(env), other = await administrator(env, 'b');
         const send = headers => worker.fetch(new Request('https://api.test/api/football/lobby', {method:'POST', headers:{Origin:origin, 'Content-Type':'application/json', ...headers}, body:JSON.stringify({displayName:'Claimed admin', admin:true, adminSessionHash:auth.adminSessionHash})}), env);
-        const forged = await (await send({})).json(); assert.equal(forged.room.members.find(item => item.id === forged.member.id).admin, false);
+        const forged = await send({}); assert.equal(forged.status, 401); assert.equal((await forged.json()).error, 'Sign in with your Bonk account to join.');
         const mismatch = await (await send({'X-Account-Session':other.userToken, Authorization:'Bearer ' + auth.adminToken})).json(); assert.equal(mismatch.room.members.find(item => item.id === mismatch.member.id).admin, false);
         const real = await (await send({'X-Account-Session':auth.userToken, Authorization:'Bearer ' + auth.adminToken})).json(); assert.equal(real.room.members.find(item => item.id === real.member.id).admin, true);
     } finally {cleanup(env);}
@@ -235,7 +244,7 @@ test('origin, one-use ticket TTL, reconnect rotation and account binding remain 
         const identity = {username:'Verified', bonkId:'555'}, first = (await join(env, 'Ignored', {identity})).data;
         assert.equal((await request(env, first.socketPath.replace('/api/football', ''), undefined, null, {Upgrade:'websocket', Origin:'https://evil.test'})).status, 403);
         const socket = await connect(env, first); socket.close(1001, 'gone'); assert.equal(roomOf(env).inputs[0], 0);
-        assert.equal((await join(env, 'Guest', {extra:{resumeToken:first.member.resumeToken}})).response.status, 403);
+        assert.equal((await join(env, 'Guest', {identity:null, extra:{resumeToken:first.member.resumeToken}})).response.status, 401);
         const resumed = (await join(env, 'Ignored', {identity, extra:{resumeToken:first.member.resumeToken}})).data; assert.equal(resumed.member.id, first.member.id); assert.notEqual(resumed.member.resumeToken, first.member.resumeToken);
         await connect(env, resumed); assert.equal((await request(env, resumed.socketPath.replace('/api/football', ''), undefined, null, {Upgrade:'websocket'})).status, 403);
         assert.equal((await join(env, 'Ignored', {identity, extra:{resumeToken:first.member.resumeToken}})).response.status, 403);
@@ -244,10 +253,12 @@ test('origin, one-use ticket TTL, reconnect rotation and account binding remain 
     } finally {cleanup(env);}
 });
 
-test('a guest may upgrade its own seat only through a real trusted account/admin identity', async () => {
+test('a legacy guest seat requires authenticated resume and upgrades only through a trusted account identity', async () => {
     const env = environment();
     try {
         const guest = await member(env, 'Guest'), auth = await administrator(env);
+        roster(roomOf(env), guest).bonkId = null; roster(roomOf(env), guest).verified = false;
+        assert.equal((await join(env, 'Guest', {identity:null, extra:{resumeToken:guest.member.resumeToken}})).response.status, 401);
         const upgraded = (await join(env, 'Ignored', {identity:auth, extra:{resumeToken:guest.member.resumeToken}})).data;
         assert.equal(upgraded.member.id, guest.member.id); const own = upgraded.room.members.find(item => item.id === guest.member.id);
         assert.equal(own.verified, true); assert.equal(own.admin, true); assert.equal(own.name, auth.username);
@@ -284,7 +295,7 @@ test('kick invalidates resume, chat limits preserve readiness, and oversized/flo
     try {
         const admin = await member(env, 'Admin', await administrator(env)), player = await member(env, 'Player'), room = roomOf(env);
         await command(room, player, {type:'ready', ready:true});
-        for (let i = 0; i < 5; i++) await command(room, player, {type:'chat', text:'Hello ' + i}); assert.equal(room.room.chat.length, 4); assert.equal(roster(room, player).ready, true);
+        for (let i = 0; i < 5; i++) await command(room, player, {type:'chat', text:'Hello ' + i}); assert.equal(player.socket.received.filter(item => item.type === 'chat').length, 4); assert.deepEqual(room.room.chat, []); assert.equal(roster(room, player).ready, true);
         await command(room, admin, {type:'kick', memberId:player.member.id}); assert.equal(player.socket.closed, true); assert.equal((await join(env, 'Player', {extra:{resumeToken:player.member.resumeToken}})).response.status, 403);
         const large = await member(env, 'Large'); await command(room, large, {type:'ping', padding:'x'.repeat(1100)}); assert.equal(large.socket.closed, true);
         const flood = await member(env, 'Flood'); for (let i = 0; i < 120 && room.connections.has(flood.member.id); i++) await command(room, flood, {type:'ping', sentAt:i}); assert.equal(flood.socket.closed, true);
@@ -358,9 +369,9 @@ test('solo Rockets excludes countdown from its 900 active ticks and records nati
         room.room.state.ball.x = 701 / 11; room.room.state.ball.xv = 20; room.tick();
         assert.equal(room.room.rockets.turnTicksLeft, 899); assert.equal(room.room.state.fte, 90); assert.equal(room.room.rockets.turnEnded, true);
         const board = room.publicRoom().rockets.leaderboard; assert.equal(board[0].scored, true); assert.ok(Math.abs(board[0].speed - 19.6) < .000001); assert.equal(room.publicRoom().rockets.unit, 'm/s');
-        assert.equal(room.room.chat.filter(item => item.system).length, 1); assert.equal(room.room.chat.at(-1).text, 'Rocket 0 reached 19.6 m/s.');
+        assert.equal(members[0].socket.received.filter(item => item.system).length, 1); assert.equal(members[0].socket.received.filter(item => item.system).at(-1).text, 'Rocket 0 reached 19.6 m/s.');
         for (let frame = 0; frame < 90; frame++) room.tick(); assert.equal(room.room.rockets.turnTicksLeft, 899); room.tick();
-        assert.equal(room.room.status, 'results'); assert.equal(room.room.results.winnerId, members[0].member.id); assert.equal(room.room.results.unit, 'm/s'); assert.equal(room.room.chat.filter(item => item.system).length, 1);
+        assert.equal(room.room.status, 'results'); assert.equal(room.room.results.winnerId, members[0].member.id); assert.equal(room.room.results.unit, 'm/s'); assert.equal(members[0].socket.received.filter(item => item.system).length, 1);
     } finally {cleanup(env);}
 });
 
@@ -371,11 +382,12 @@ test('Rockets turns rotate through every participant, cap defenders at four, and
         assert.equal(room.room.rockets.participantIds.includes(late.member.id), false); assert.equal(roster(room, late).queued, true);
         const seen = [];
         for (let turn = 0; turn < 6; turn++) {
-            seen.push(room.room.rockets.attackerId); assert.equal(room.publicRoom().rockets.turnIndex, turn + 1); assert.equal(room.room.members.filter(item => item.team === 3).length, 1); assert.equal(room.room.members.filter(item => item.team === 2).length, 4);
+            const attackerTeam = room.room.rockets.attackerTeam, defenderTeam = attackerTeam === 3 ? 2 : 3;
+            seen.push(room.room.rockets.attackerId); assert.equal(room.publicRoom().rockets.turnIndex, turn + 1); assert.equal(room.room.members.filter(item => item.team === attackerTeam).length, 1); assert.equal(room.room.members.filter(item => item.team === defenderTeam).length, 4);
             room.room.state.ftu = -1; room.room.rockets.turnTicksLeft = 1; room.tick();
         }
         assert.deepEqual(seen, members.map(data => data.member.id)); assert.equal(room.room.status, 'results'); assert.equal(room.room.results.leaderboard.length, 6); assert.ok(room.room.results.leaderboard.every(row => !row.scored));
-        assert.equal(room.room.chat.filter(item => item.system).length, 0); assert.equal(room.room.results.winnerId, null);
+        assert.equal(members[0].socket.received.filter(item => item.system).length, 0); assert.equal(room.room.results.winnerId, null);
     } finally {cleanup(env);}
 });
 
@@ -396,7 +408,7 @@ test('Rockets red goals do not announce a shot; role changes skip the attacker a
     try {
         const {room, members} = await rocketsMatch(env, 3);
         room.room.state.ftu = -1; room.room.state.ball.x = 29 / 11; room.room.state.ball.xv = -20; room.tick();
-        assert.equal(room.room.state.lscr, 2); assert.equal(room.room.chat.filter(item => item.system).length, 0);
+        assert.equal(room.room.state.lscr, 2); assert.equal(members[0].socket.received.filter(item => item.system).length, 0);
         for (let frame = 0; frame < 91; frame++) room.tick(); assert.equal(room.room.rockets.attackerId, members[1].member.id); assert.equal(room.publicRoom().rockets.leaderboard.find(row => row.id === members[0].member.id).scored, false);
         await command(room, members[1], {type:'spectate'}); assert.equal(room.room.rockets.attackerId, members[2].member.id); assert.equal(room.room.rockets.totalTurns, 2); assert.equal(roster(room, members[1]).queued, false); assert.equal(room.publicRoom().rockets.leaderboard.some(row => row.id === members[1].member.id), false);
         await command(room, members[0], {type:'queue', team:0}); assert.equal(room.room.rockets.participantIds.includes(members[0].member.id), false); assert.equal(roster(room, members[0]).queued, true); assert.equal(room.publicRoom().rockets.leaderboard.length, 1);
@@ -598,5 +610,110 @@ test('an empty results room stops its simulation immediately while keeping the s
         assert.equal(room.room.status, 'lobby');
         assert.equal(room.room.results, null);
         assert.equal(room.room.state, null);
+    } finally {cleanup(env);}
+});
+
+test('public live viewers receive game snapshots and results coast without joining or gaining authority', async () => {
+    const env = environment();
+    try {
+        const {room} = await match(env), beforeMembers = room.room.members.length, viewer = await watch(env), beforeActivity = room.room.lastActive;
+        assert.equal(viewer.socket.received[0].type, 'watch'); assert.equal(viewer.socket.received[0].room.status, 'playing'); assert.equal(Object.hasOwn(viewer.socket.received[0].room, 'chat'), false);
+        room.watchMessage(viewer.connection, JSON.stringify({type:'ping', sentAt:123})); assert.equal(viewer.socket.received.at(-1).type, 'pong'); assert.equal(viewer.socket.received.at(-1).sentAt, 123); assert.equal(room.room.lastActive, beforeActivity);
+        room.tick(); room.tick(); assert.ok(viewer.socket.received.some(message => message.type === 'snapshot' && message.status === 'playing')); assert.equal(room.room.members.length, beforeMembers);
+        room.room.state.ftu = -1; room.room.state.ball.xv = 2; room.finishGame(3); room.stopTimer(); const x = room.room.state.ball.x; room.tick(); room.tick();
+        assert.ok(viewer.socket.received.some(message => message.type === 'snapshot' && message.status === 'results' && message.state.ball.x > x));
+        assert.ok(viewer.socket.received.every(message => ['watch', 'room', 'snapshot', 'pong'].includes(message.type)));
+    } finally {cleanup(env);}
+});
+
+test('watch sockets reject input, chat, joins, votes and admin commands without changing public game state', async () => {
+    const env = environment();
+    try {
+        await request(env); const room = roomOf(env), before = JSON.stringify(room.publicRoom()), activity = room.room.lastActive;
+        for (const message of [{type:'input', seq:1, flags:63}, {type:'chat', text:'private'}, {type:'join', identity:{username:'Forged', bonkId:'1'}}, {type:'modeVote', mode:'rockets'}, {type:'settings', settings:{scoreLimit:9}}, {type:'ping', padding:'x'.repeat(300)}]) {
+            const viewer = await watch(env); room.watchMessage(viewer.connection, JSON.stringify(message)); assert.equal(viewer.socket.closed, true);
+        }
+        assert.equal(JSON.stringify(room.publicRoom()), before); assert.equal(room.room.lastActive, activity); assert.equal(room.room.members.length, 0); assert.equal(room.connections.size, 0); assert.equal(room.tickets.size, 0); assert.equal(room.timer, null);
+    } finally {cleanup(env);}
+});
+
+test('watch handshakes enforce origin, capacity, global rate limiting and independent heartbeat expiry', async () => {
+    const env = environment();
+    try {
+        assert.equal((await request(env, '/watch', undefined, null, {Upgrade:'websocket', Origin:'https://evil.test'})).status, 403);
+        assert.equal((await request(env, '/watch')).status, 426); assert.equal((await request(env, '/watch', {})).status, 404);
+        const viewers = []; for (let i = 0; i < LIMITS.MAX_WATCHERS; i++) viewers.push(await watch(env)); const room = roomOf(env);
+        assert.equal((await request(env, '/watch', undefined, null, {Upgrade:'websocket'})).status, 409); assert.equal(room.room.members.length, 0); assert.equal(room.timer, null);
+        const alarm = room.ctx.storage.alarm; room.watchMessage(viewers[0].connection, JSON.stringify({type:'ping'})); assert.equal(room.ctx.storage.alarm, alarm);
+        viewers[0].connection.lastMessageAt = Date.now() - LIMITS.HEARTBEAT_TTL - 1; await room.alarm(); assert.equal(viewers[0].socket.closed, true); assert.equal(room.watchers.size, LIMITS.MAX_WATCHERS - 1);
+        room.room.lastActive = Date.now() - LIMITS.IDLE_TTL - 1; await room.alarm(); assert.equal(room.watchers.size, 0); assert.ok(viewers.every(viewer => viewer.socket.closed)); assert.equal(room.timer, null);
+        env.API_RATE_LIMITER.limit = async () => ({success:false});
+        const throttled = await worker.fetch(new Request('https://api.test/api/football/watch', {headers:{Origin:origin, Upgrade:'websocket'}}), env); assert.equal(throttled.status, 429);
+    } finally {cleanup(env);}
+});
+
+test('chat is delivered only live to joined members and never stored, replayed or included in watch/info/room payloads', async () => {
+    const env = environment();
+    try {
+        const first = await member(env, 'First'), room = roomOf(env), viewer = await watch(env), marker = 'Only joined live recipients see this';
+        await command(room, first, {type:'chat', text:marker}); assert.equal(first.socket.received.filter(message => message.type === 'chat').length, 1); assert.deepEqual(room.room.chat, []);
+        const info = await (await request(env)).json(); assert.equal(Object.hasOwn(info.room, 'chat'), false); assert.equal(JSON.stringify(info).includes(marker), false);
+        const later = (await join(env, 'Later')).data; assert.equal(JSON.stringify(later).includes(marker), false); const laterSocket = await connect(env, later); assert.equal(laterSocket.received.some(message => message.type === 'chat'), false);
+        const resumed = (await join(env, 'First', {extra:{resumeToken:first.member.resumeToken}})).data, resumedSocket = await connect(env, resumed); assert.equal(resumedSocket.received.some(message => message.type === 'chat'), false);
+        room.broadcastRoom(); room.systemChat('Current system announcement');
+        assert.equal(laterSocket.received.filter(message => message.type === 'chat').length, 1); assert.equal(viewer.socket.received.some(message => message.type === 'chat'), false);
+        assert.equal(JSON.stringify(viewer.socket.received).includes(marker), false); assert.equal(JSON.stringify(viewer.socket.received).includes('Current system announcement'), false);
+        await room.persist(); assert.deepEqual((await room.ctx.storage.get('checkpoint')).room.chat, []);
+    } finally {cleanup(env);}
+});
+
+test('join preferences are whitelisted before the first assignment and balanced mode honors feasible requests', async () => {
+    const env = environment();
+    try {
+        const red = (await join(env, 'Red', {extra:{preferredTeam:2}})).data; await connect(env, red); const room = roomOf(env);
+        assert.equal(roster(room, red).preferredTeam, 2); assert.equal(roster(room, red).team, 2);
+        const blue = (await join(env, 'Blue', {extra:{preferredTeam:3}})).data; await connect(env, blue); assert.equal(roster(room, blue).team, 3);
+        assert.equal((await join(env, 'Invalid', {extra:{preferredTeam:4}})).response.status, 400); assert.equal((await join(env, 'Invalid', {extra:{preferredTeam:'3'}})).response.status, 400); assert.equal(room.room.members.length, 2);
+        await command(room, red, {type:'modeVote', mode:'balanced'}); await command(room, blue, {type:'modeVote', mode:'balanced'});
+        await command(room, red, {type:'preference', team:3}); await command(room, blue, {type:'preference', team:2});
+        assert.equal(roster(room, red).team, 3); assert.equal(roster(room, blue).team, 2); assert.equal(roster(room, red).queueTeam, 0); assert.equal(roster(room, red).queued, false);
+        assert.equal(room.publicRoom().members.find(member => member.id === red.member.id).preferredTeam, 3);
+    } finally {cleanup(env);}
+});
+
+test('Rockets preferences preserve turn order and clock, allow one side swap, and credit the actual attacker team', async () => {
+    const env = environment();
+    try {
+        const {room, members} = await rocketsMatch(env), attacker = members[0], defender = members[1], order = [...room.room.rockets.participantIds];
+        room.room.state.ftu = -1; for (let i = 0; i < 5; i++) room.tick(); const ticks = room.room.rockets.turnTicksLeft;
+        await command(room, defender, {type:'preference', team:3}); assert.equal(room.room.rockets.attackerTeam, 3); assert.equal(roster(room, defender).team, 2); assert.equal(room.room.rockets.participantIds.includes(defender.member.id), true);
+        await command(room, attacker, {type:'preference', team:2});
+        assert.equal(room.room.rockets.attackerTeam, 2); assert.equal(room.publicRoom().rockets.sideChangeUsed, true); assert.equal(room.room.rockets.turnTicksLeft, ticks); assert.equal(room.room.rockets.turnIndex, 1); assert.deepEqual(room.room.rockets.participantIds, order); assert.equal(room.room.state.ftu, 120);
+        assert.equal(roster(room, attacker).team, 2); assert.equal(roster(room, defender).team, 3); assert.equal(roster(room, attacker).queued, false);
+        await command(room, attacker, {type:'preference', team:3}); assert.equal(roster(room, attacker).preferredTeam, 3); assert.equal(room.room.rockets.attackerTeam, 2); assert.equal(room.room.rockets.turnTicksLeft, ticks);
+        room.room.state.ftu = -1; room.room.state.ball.x = 29 / 11; room.room.state.ball.xv = -20; room.tick();
+        assert.equal(room.room.state.lscr, 2); assert.equal(room.publicRoom().rockets.leaderboard.find(row => row.id === attacker.member.id).scored, true); assert.equal(attacker.socket.received.filter(message => message.type === 'chat' && message.system).length, 1);
+        for (let i = 0; i < 91; i++) room.tick(); assert.equal(room.room.rockets.attackerId, defender.member.id); assert.equal(room.room.rockets.attackerTeam, 3); assert.equal(room.room.rockets.sideChangeUsed, false);
+    } finally {cleanup(env);}
+});
+
+test('Random Rockets sides alternate deterministically and opponent goals never become attacker records', async () => {
+    const env = environment();
+    try {
+        const {room, members} = await rocketsMatch(env); assert.equal(room.room.rockets.attackerTeam, 3);
+        room.room.state.ftu = -1; room.room.rockets.turnTicksLeft = 1; room.tick(); assert.equal(room.room.rockets.attackerId, members[1].member.id); assert.equal(room.room.rockets.attackerTeam, 2);
+        room.room.state.ftu = -1; room.room.state.ball.x = 701 / 11; room.room.state.ball.xv = 20; room.tick();
+        assert.equal(room.room.state.lscr, 3); assert.equal(room.publicRoom().rockets.leaderboard.find(row => row.id === members[1].member.id).scored, false); assert.equal(members[1].socket.received.filter(message => message.type === 'chat' && message.system).length, 0);
+    } finally {cleanup(env);}
+});
+
+test('offline lobby seats excluded from a Rockets start cannot leave active ghost discs', async () => {
+    const env = environment();
+    try {
+        const people = []; for (let i = 0; i < 3; i++) people.push(await member(env, 'Rocket ' + i, null, {vote:false})); const room = roomOf(env);
+        for (const data of people) await command(room, data, {type:'modeVote', mode:'rockets'});
+        const offlineSlot = roster(room, people[2]).slot; people[2].socket.close(1001, 'before game');
+        await command(room, people[0], {type:'ready', ready:true}); await command(room, people[1], {type:'ready', ready:true}); room.stopTimer();
+        assert.equal(room.room.status, 'playing'); assert.equal(room.room.rockets.totalTurns, 2); assert.equal(roster(room, people[2]).team, 0); assert.equal(roster(room, people[2]).queued, true); assert.equal(room.room.state.discs[offlineSlot] || null, null);
     } finally {cleanup(env);}
 });

@@ -2,11 +2,15 @@
 
 The unlisted game page is available at `/football/`. It is excluded from the
 site navigation and asks search engines not to index it. Everyone visiting this
-link joins the same shared football lobby.
+link watches the same shared football pitch. Watching does not reserve a place
+or receive room chat. When no live game is available, a local freeplay scene
+uses the same native physics behind the join overlay.
 
 ## Playing
 
-Enter a display name and choose Join football. A voting station on the pitch
+Choose Join game and sign in with a Bonk account if needed. Sign-in opens over
+the dimmed page without leaving football. Joining is verified by the server.
+A voting station on the pitch
 offers Balanced teams and Rockets. Each connected participant has one vote;
 spectators can watch. Voting lasts fifteen seconds, or ends sooner when every
 eligible player has voted. A tie selects Balanced teams.
@@ -15,7 +19,9 @@ Balanced teams keeps the sides as even as possible, with up to four players per
 side. A single player can start a practice game. New arrivals join the queue and
 take an available place at the next kickoff. Lobby assignments keep team sizes
 within one player while moving as few existing players as possible. Players
-can opt out and spectate.
+can opt out and spectate. The Teams overlay includes a Blue or Red preference,
+with Random centred below. Preferences are honoured when compatible with even
+teams; they do not override the balancing rules.
 
 Between games, each team player has a Ready button and a visible ready status.
 When every participating player is ready, the server starts a new game
@@ -37,10 +43,16 @@ eligibility.
 ## Rockets
 
 Every participant gets one attacking turn in server-recorded join order. The
-attacker plays Blue against up to four other participants defending Red. Other
+attacker chooses Blue, Red or Random, with up to four other participants
+defending the opposite side. Random alternates shooting sides in join order. Other
 participants wait for their turns; new arrivals enter the next game. Each turn
 allows thirty seconds of active play, excluding kickoff and goal celebration.
 A goal or timeout ends the turn. Solo Rockets is also supported.
+
+The current attacker can change shooting sides once per turn. This restarts
+the kickoff while preserving their remaining active time, turn and queue
+position. Further preference changes apply to a future turn. Defenders can
+also save a preferred side for their own attacking turn.
 
 A successful goal posts a system chat message such as `Player reached 19.6 m/s.`
 The measurement matches `Project-002/football-ball-speed.user.js` from the
@@ -61,11 +73,12 @@ Move with WASD or the arrow keys. X, Space and Shift kick; releasing the key
 rearms the next successful kick. Holding a kick reduces movement force to 70%.
 Z supplies no movement force, allowing normal damping to slow the player.
 Enter focuses room chat and Escape releases controls. Touch buttons support
-holding movement and kick together. Fullscreen and sound controls are below the
-pitch.
+holding movement and kick together. Fullscreen, sound, Teams and Leave controls
+sit over the pitch. Fullscreen expands the pitch and its overlays to the entire
+viewport; Exit fullscreen or the browser's Escape key returns to the page.
 
-Guests choose a room display name. If a visitor is already signed into Bonk
-Critic, the server uses that verified Bonk identity. Administrator controls
+Visitors can watch without signing in. Joining requires a verified Bonk
+identity; anonymous joins are rejected on the server. Administrator controls
 require the site's existing account sign-in and elevated administrator session;
 joining first does not grant permissions. Reloading the same tab resumes its seat
 using a room-specific credential, without placing account credentials in the
@@ -91,6 +104,11 @@ reserved for chat and menus.
 
 Filter profanity controls local chat display and can be toggled at any time,
 including for messages already received. Original chat text remains unchanged.
+Chat is sent only to currently joined room members. It has no saved backlog
+in HTTP responses, WebSocket welcomes or public viewing. Leaving clears this
+visit's chat. The browser keeps at most 200 rendered lines, accounting for
+wrapped messages and changes in width. In fullscreen, chat sits at the bottom
+left with transparent history and a separate input underneath it.
 The bundled 94-term list and character folding come from `Bonk.wab`,
 `Bonk.charReplacements` and `Bonk.sanitizeString` in the supplied
 `Version Storage/bonkannotated.js`. Like that source, matching includes
@@ -161,8 +179,10 @@ Only the server changes positions, scores, membership, queue order, readiness
 and administrator permissions. Administrator actions revalidate the existing
 database sessions and linked Bonk account on the server.
 
-The Worker exposes lobby information and joining at `/api/football/lobby`, and
-a ticketed WebSocket under `/api/football/rooms`. Legacy room URLs are aliases
+The Worker exposes lobby information and joining at `/api/football/lobby`, a
+read-only public WebSocket at `/api/football/watch`, and a ticketed member
+WebSocket under `/api/football/rooms`. Watchers can only send heartbeat pings;
+they cannot affect membership, votes, chat or game state. Legacy room URLs are aliases
 for the shared lobby and cannot create separate games. WebSocket tickets are single-use and expire
 after 30 seconds. Resume credentials rotate, inputs expire after one second,
 silent connections close after fifteen seconds, and disconnected seats have a
