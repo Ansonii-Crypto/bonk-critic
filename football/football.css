@@ -26,7 +26,8 @@
 }
 
 html {
-    min-height: 100%;
+    height: 100%;
+    overflow: hidden;
 }
 
 body {
@@ -34,6 +35,8 @@ body {
     min-width: 280px;
     min-height: 100vh;
     min-height: 100dvh;
+    height: 100dvh;
+    overflow: hidden;
     background: radial-gradient(ellipse at 10% 0, #f1f0dc 0, transparent 52%), linear-gradient(145deg, #e7ead9, #d2e1d1);
     font-size: 14px;
     -webkit-user-select: none;
@@ -185,11 +188,14 @@ button > span[aria-hidden] {
 }
 
 .football-app {
-    min-height: 100vh;
-    min-height: 100dvh;
+    height: 100dvh;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
 }
 
 .site-header {
+    flex: 0 0 auto;
     min-height: 76px;
     padding: 14px max(18px, calc((100% - 1120px) / 2));
     display: flex;
@@ -266,7 +272,12 @@ button > span[aria-hidden] {
 }
 
 .football-main {
-    width: min(1760px, 100%);
+    width: 100%;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
     margin: 0 auto;
     padding: 27px 24px 32px;
 }
@@ -2077,17 +2088,23 @@ kbd {
 
 .teams-overlay {
     z-index: 17;
+    padding-bottom: 145px;
+    pointer-events: none;
 }
 
 .teams-card {
-    width: min(760px, 100%);
+    width: min(850px, 100%);
     max-height: 100%;
-    padding: 23px;
+    padding: 6px;
     overflow-y: auto;
     overscroll-behavior: contain;
-    border: 3px solid var(--ink);
-    border-radius: 8px;
-    box-shadow: 0 5px 0 #263a2c80, 0 16px 40px #172b2040;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    color: #fffdf5;
+    text-shadow: 0 1px 3px #132b1dcc;
+    pointer-events: auto;
     scrollbar-width: thin;
 }
 
@@ -2111,11 +2128,10 @@ kbd {
 }
 
 .team-preference-panel {
-    margin-top: 20px;
-    padding: 15px;
-    border: 1px solid #b7bba6;
-    border-radius: 6px;
-    background: #f4eedc;
+    margin-top: 16px;
+    padding: 0;
+    border: 0;
+    background: transparent;
 }
 
 .team-preference-panel h3 {
@@ -2175,13 +2191,14 @@ kbd {
 .team-preference-panel .section-description {
     margin-top: 12px;
     text-align: center;
+    color: #f2f4e6;
 }
 
 .team-lists {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     align-items: start;
-    column-gap: 23px;
+    gap: 14px;
 }
 
 .spectator-team {
@@ -2203,6 +2220,111 @@ kbd {
 
 .teams-card .roster-actions {
     margin-left: auto;
+}
+
+.page-heading-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.teams-card .lobby-panel {
+    border: 0;
+}
+
+.teams-card .team-section {
+    display: grid;
+    gap: 8px;
+    padding: 0;
+    border: 0;
+}
+
+.team-roster-card {
+    min-height: 105px;
+    padding: 13px;
+    border: 2px solid var(--ink);
+    border-radius: 6px;
+    background: var(--paper);
+    color: var(--text);
+    text-shadow: none;
+    box-shadow: 0 3px 0 #24372bc0;
+}
+
+.team-roster-card .roster {
+    min-height: 25px;
+}
+
+.join-team {
+    justify-self: center;
+    min-width: 125px;
+}
+
+.join-blue {
+    background: #dbeaf4;
+    color: #365f88;
+}
+
+.join-red {
+    background: #f2dcd5;
+    color: #9f4846;
+}
+
+.teams-card .section-note, .teams-card .mode-label, .teams-card #readySummary {
+    color: #fff8e6;
+}
+
+.teams-card .game-overlay {
+    position: static;
+    inset: auto;
+    padding: 15px 0 0;
+    background: none;
+    overflow: visible;
+    text-shadow: none;
+}
+
+.teams-card .game-overlay .field-overlay-card {
+    width: 100%;
+    max-height: none;
+    overflow: visible;
+    color: var(--text);
+}
+
+.team-preference-panel.is-live-preference {
+    position: absolute;
+    z-index: 6;
+    top: 60px;
+    right: 12px;
+    width: min(230px, 35%);
+    margin: 0;
+}
+
+.is-live-preference h3, .is-live-preference .section-description {
+    display: none;
+}
+
+.is-live-preference .preference-button {
+    min-height: 26px;
+    padding: 5px 8px;
+    font-size: 10px;
+}
+
+.is-live-preference .preference-random {
+    min-width: 0;
+    width: 75%;
+}
+
+.field-ui-toggle {
+    display: none;
+}
+
+#pitchWrap:fullscreen .field-ui-toggle {
+    display: inline-flex;
+}
+
+#pitchWrap.hide-game-ui > :not(canvas) {
+    display: none !important;
 }
 
 .ready-controls {
@@ -2710,5 +2832,122 @@ kbd {
     }
     .rocket-turn-timer {
         font-size: 19px;
+    }
+}
+
+/* The lobby keeps the team lists above optional side preferences. */
+.arena-frame.showing-teams {
+    height: max(580px, calc(100dvh - 250px));
+    max-height: none;
+    aspect-ratio: auto;
+}
+
+.showing-teams .teams-overlay {
+    padding-bottom: 125px;
+    place-items: start center;
+}
+
+.teams-card {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    flex-shrink: 0;
+}
+
+.teams-card .room-heading {
+    order: 0;
+}
+
+.teams-card .room-heading .eyebrow {
+    color: #e9efdc;
+}
+
+.teams-card .lobby-panel {
+    order: 2;
+}
+
+.teams-card .team-preference-panel {
+    order: 3;
+}
+
+.teams-card .game-overlay {
+    order: 1;
+    flex: 0 0 auto;
+}
+
+.teams-card .game-overlay .field-overlay-card {
+    padding: 12px;
+}
+
+.teams-card .game-overlay .overlay-heading .eyebrow,
+.teams-card .game-overlay .overlay-description,
+.teams-card .game-overlay .mode-description,
+.teams-card .game-overlay .mode-vote-action {
+    display: none;
+}
+
+.teams-card .game-overlay h2 {
+    margin: 0;
+    font-size: 18px;
+}
+
+.teams-card .mode-vote-panel {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.teams-card .mode-vote-button {
+    padding: 10px;
+}
+
+.showing-teams .football-chat {
+    z-index: 20;
+    width: min(450px, calc(100% - 24px));
+}
+
+.showing-teams .football-chat .chat-log {
+    height: auto;
+    max-height: 65px;
+}
+
+.page-heading-actions {
+    align-self: flex-end;
+}
+
+@media (max-width: 540px) {
+    .page-heading-actions {
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 8px;
+    }
+    .teams-card .room-heading h2 {
+        font-size: 18px;
+    }
+    .team-roster-card {
+        min-height: 90px;
+        padding: 9px;
+    }
+    .teams-card .roster-name {
+        flex-basis: 75px;
+    }
+    .join-team {
+        min-width: 0;
+        width: 100%;
+        font-size: 10px;
+    }
+    .teams-card .team-preference-panel {
+        padding: 0;
+    }
+    .showing-teams .football-chat {
+        width: calc(100% - 14px);
+        max-width: none;
+    }
+    .teams-card .mode-vote-heading {
+        flex-wrap: wrap;
+    }
+    .team-preference-panel.is-live-preference {
+        top: 45px;
     }
 }

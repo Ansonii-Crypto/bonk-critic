@@ -3,21 +3,20 @@ import {DEFAULT_MATCH_SETTINGS, SETTING_RULES, validateMatchSettings} from './se
 import {FOOTBALL_MODES, ballSpeed} from './modes.js?v=20261126-football-5';
 import {maskProfanity} from './chat-filter.js?v=20261127-football-6';
 import {DEFAULT_KEYBINDS, BINDING_ACTIONS, validateKeybinds, canonicalBindingCode} from './keybinds.js?v=20261127-football-6';
-import {initFootballAccount} from './account-menu.js?v=20261127-football-7';
-import {FootballWatcher} from './watcher.js?v=20261127-football-7';
-import {FreeplayScene} from './freeplay.js?v=20261127-football-7';
+import {initFootballAccount} from './account-menu.js?v=20261127-football-8';
+import {FootballWatcher} from './watcher.js?v=20261127-football-8';
 
 const $ = id => document.getElementById(id);
 const canvas = $('footballCanvas');
 const context = canvas.getContext('2d');
 const API = (window.APP_CONFIG?.API_URL || '').replace(/\/$/, '');
 const LOBBY_ID = 'footballdivision';
-const controls = {left: 1, right: 2, up: 4, down: 8, action: 16, action2: 32};
+const controls = {left: 1, right: 2, up: 4, down: 8, action: 16};
+const gameplayActions = BINDING_ACTIONS.filter(action => action !== 'action2');
 const keys = new Map();
 const held = new Set();
 const touches = new Map();
 const physics = new FootballPhysics();
-const freeplay = new FreeplayScene();
 let room = null, memberId = null, socket = null, ready = false, sequence = 0;
 let flags = 0, busy = false, leaving = false, generation = 0, retries = 0, retryTimer;
 let lastState = null, predicted = null, snapshots = [], lastInputs = [];
@@ -27,9 +26,10 @@ let notice = '', noticeUntil = 0, latestStatus = '', lastScores = [0, 0, 0, 0];
 let account = null, reconnecting = false;
 let settingsDirty = false, settingsSignature = '', pendingSettingsSignature = null, geometrySignature = '';
 let leaderboardSignature = '', serverClockOffset = 0;
-let teamsOpen = false, joinAfterLogin = false, selectedPreference = 0, accountLoaded = false;
+let gameUiHidden = false, chatEnterHeld = false, joinAfterLogin = false, selectedPreference = 0, accountLoaded = false;
+let restoreTouch = null;
 let activeBindings = copyBindings(DEFAULT_KEYBINDS), draftBindings = copyBindings(DEFAULT_KEYBINDS), capturingKey = null;
-const bindingLabels = {left: 'Left', right: 'Right', up: 'Up', down: 'Down', action: 'Kick', action2: 'Brake'};
+const bindingLabels = {left: 'Left', right: 'Right', up: 'Up', down: 'Down', action: 'Kick'};
 const chatMessages = [];
 const smoothing = new Map();
 const seenChat = new Set();
@@ -59,11 +59,12 @@ function bindingStorageKey() {
 }
 
 function applyBindings(value) {
-    const checked = validateKeybinds(value);
+    // Keep the provider's legacy shape readable, but football has no brake.
+    const checked = validateKeybinds({...value, action2: []});
     if (checked.error) return false;
     releaseInput(); activeBindings = copyBindings(checked.bindings); keys.clear();
-    for (const action of BINDING_ACTIONS) for (const code of activeBindings[action]) keys.set(code, controls[action]);
-    for (const [id, actions] of [['moveKeyHelp', ['left', 'up', 'down', 'right']], ['kickKeyHelp', ['action']], ['brakeKeyHelp', ['action2']]]) {
+    for (const action of gameplayActions) for (const code of activeBindings[action]) keys.set(code, controls[action]);
+    for (const [id, actions] of [['moveKeyHelp', ['left', 'up', 'down', 'right']], ['kickKeyHelp', ['action']]]) {
         const node = $(id); if (!node) continue;
         const labels = [...new Set(actions.flatMap(action => activeBindings[action]))].map(keyLabel);
         node.textContent = labels.length ? labels.join(' · ') : 'Unbound';
@@ -73,7 +74,7 @@ function applyBindings(value) {
 
 function renderBindingFields() {
     const container = $('keybindFields'); container.replaceChildren();
-    for (const action of BINDING_ACTIONS) {
+    for (const action of gameplayActions) {
         const row = document.createElement('div'), label = document.createElement('strong');
         row.className = 'keybind-row'; label.textContent = bindingLabels[action]; row.append(label);
         for (let slot = 0; slot < 3; slot++) {
@@ -98,8 +99,8 @@ function loadAccountPreferences(user) {
     const provider = user?.football_controls, providerBindings = provider?.bindings;
     let saved = null;
     try {saved = JSON.parse(localStorage.getItem(bindingStorageKey()) || 'null');} catch {}
-    const validSaved = saved && !validateKeybinds(saved).error;
-    const validProvider = providerBindings && !validateKeybinds(providerBindings).error;
+    const validSaved = saved && !validateKeybinds({...saved, action2: []}).error;
+    const validProvider = providerBindings && !validateKeybinds({...providerBindings, action2: []}).error;
     applyBindings(validSaved ? saved : validProvider ? providerBindings : DEFAULT_KEYBINDS);
     draftBindings = copyBindings(activeBindings); capturingKey = null; renderBindingFields();
     setText($('keybindStatus'), validSaved ? 'Using your saved football controls for this browser.'
@@ -117,6 +118,21 @@ function setTeamPreference(team) {
     try {localStorage.setItem('football-preferred-team:' + (account?.id || 'viewer'), String(team));} catch {}
     if (memberId) send({type: 'preference', team});
     renderGamePanels();
+    if (room?.status === 'playing' && self()?.team) canvas.focus({preventScroll: true});
+}
+
+function setGameUiHidden(hidden) {
+    gameUiHidden = hidden; restoreTouch = null;
+    if (capturingKey) {capturingKey = null; renderBindingFields();}
+    $('pitchWrap').classList.toggle('hide-game-ui', hidden);
+    for (const id of ['toggleGameUi', 'toggleFullscreenUi']) {
+        const button = $(id); if (!button) continue;
+        setText(button, hidden ? 'Show game UI' : 'Hide game UI');
+        button.setAttribute('aria-pressed', String(hidden));
+    }
+    releaseInput();
+    if (hidden) canvas.focus({preventScroll: true});
+    else requestAnimationFrame(renderChat);
 }
 
 function setText(node, text) {
@@ -214,7 +230,7 @@ function tone(frequency, duration = 0.06, volume = 0.035) {
 }
 
 function decodedInput(value = 0) {
-    return {left: !!(value & 1), right: !!(value & 2), up: !!(value & 4), down: !!(value & 8), action: !!(value & 16), action2: !!(value & 32)};
+    return {left: !!(value & 1), right: !!(value & 2), up: !!(value & 4), down: !!(value & 8), action: !!(value & 16)};
 }
 
 function predictionInput() {
@@ -266,7 +282,7 @@ const watcher = new FootballWatcher({
     api: API,
     onRoom: next => {if (!memberId) applyRoom(next);},
     onSnapshot: message => {if (!memberId) acceptSnapshot(message);},
-    onStatus: connected => {if (!memberId) setText($('connectionStatus'), connected ? 'Watching live' : 'Preview · reconnecting…');},
+    onStatus: connected => {if (!memberId) setText($('connectionStatus'), connected ? 'Watching live' : 'Live view · reconnecting…');},
 });
 
 function addChat(message) {
@@ -312,7 +328,7 @@ new ResizeObserver(() => {
 
 function renderRoster(team, target) {
     target.replaceChildren();
-    for (const member of room.members.filter(member => member.team === team && (team || !member.queued))) {
+    for (const member of room.members.filter(member => member.team === team)) {
         const row = document.createElement('li'), name = document.createElement('span');
         name.className = 'roster-name';
         name.textContent = member.name + (member.id === memberId ? ' (you)' : '') + (member.admin ? ' · admin' : '') + (!member.connected ? ' · reconnecting' : '');
@@ -321,10 +337,10 @@ function renderRoster(team, target) {
         const identity = document.createElement('span'); identity.className = 'roster-identity';
         identity.textContent = member.verified ? 'Bonk' : 'Guest';
         identity.title = member.verified ? 'Verified Bonk account' : 'Guest name'; row.append(identity);
-        if (team) {
+        if (team || member.queued) {
             const check = document.createElement('span'); check.className = 'ready-indicator';
             check.dataset.ready = String(!!member.ready);
-            check.textContent = member.ready ? '✓ Ready' : room.status === 'playing' ? 'Playing' : 'Not ready';
+            check.textContent = member.ready ? '✓ Ready' : room.status === 'playing' ? member.team ? 'Playing' : 'Next game' : 'Not ready';
             row.append(check);
         }
         if (self()?.admin) {
@@ -354,38 +370,27 @@ function renderRoster(team, target) {
     }
 }
 
-function renderQueue() {
-    const target = $('queueRoster'); target.replaceChildren();
-    const queued = room.members.filter(member => member.queued).sort((a, b) => a.queuePosition - b.queuePosition);
-    for (const member of queued) {
-        const row = document.createElement('li'), name = document.createElement('span'), preference = document.createElement('span');
-        name.className = 'roster-name'; preference.className = 'queue-preference';
-        name.textContent = member.name + (member.id === memberId ? ' (you)' : '');
-        preference.textContent = member.queueTeam ? teamName(member.queueTeam) : 'Either team';
-        row.append(name, preference); target.append(row);
-    }
-    if (!queued.length) {
-        const empty = document.createElement('li'); empty.className = 'roster-empty';
-        empty.textContent = 'Nobody waiting'; target.append(empty);
-    }
-}
-
 function renderGamePanels() {
     const joined = !!memberId;
     const voting = joined && room?.status === 'voting' && !!room.vote;
     const results = joined && room?.status === 'results' && !!room.results;
     const playing = room?.status === 'playing';
     const me = self(), eligible = !!(me?.connected && (me.team || me.queued));
+    const preference = $('teamPreferencePanel'), livePreference = joined && playing && room.mode === 'rockets' && !!me?.team;
+    preference.classList.toggle('is-live-preference', livePreference);
+    preference.hidden = !joined;
+    if (livePreference && preference.parentElement !== $('pitchWrap')) $('pitchWrap').append(preference);
+    else if (!livePreference && preference.parentElement !== $('roomPanel')) $('roomPanel').insertBefore(preference, $('lobbyPanel'));
     $('roomEntry').hidden = joined;
     $('roomPanel').hidden = !joined;
-    $('teamsOverlay').hidden = !joined || !teamsOpen || voting || results;
-    $('toggleTeams').setAttribute('aria-expanded', String(!$('teamsOverlay').hidden));
+    $('teamsOverlay').hidden = !joined || playing && !!me?.team;
+    $('pitchWrap').classList.toggle('showing-teams', !$('teamsOverlay').hidden);
+    $('touchControls').hidden = !joined || !playing || !me?.team;
     $('footballChat').hidden = !joined;
-    $('toggleTeams').hidden = !joined;
     $('leaveRoom').hidden = !joined;
     $('pitchWrap').classList.toggle('is-in-room', joined);
     setText($('entryTitle'), account ? 'Join the game' : 'Sign in to play');
-    setText($('entryDescription'), account ? 'Take your place on the shared pitch. You will join at the next kickoff.' : 'Sign in to take your place on the shared pitch.');
+    setText($('entryDescription'), account ? 'Join the lobby, or watch the current match until the next game.' : 'Sign in to take your place on the shared pitch.');
     setText($('joinGameButton'), account ? 'Join game' : 'Sign in to join');
     $('joinGameButton').disabled = busy;
     for (const [id, team] of [['preferBlue', 3], ['preferRed', 2], ['preferRandom', 0]]) $(id).setAttribute('aria-pressed', String(selectedPreference === team));
@@ -483,27 +488,29 @@ function updateSettings() {
 function applyRoom(next) {
     if (!next) return;
     const oldStatus = room?.status, oldAttacker = room?.rockets?.attackerId; room = next;
-    if (oldStatus !== 'playing' && room.status === 'playing') teamsOpen = false;
     if (settingsFingerprint(room.settings) === pendingSettingsSignature) {settingsDirty = false; pendingSettingsSignature = null;}
     if (oldStatus !== room.status || oldAttacker !== room.rockets?.attackerId) {releaseInput(); snapshots = []; smoothing.clear(); predicted = null;}
     setText($('roomTitle'), room.name); setText($('roomCodeDisplay'), room.id);
     history.replaceState(null, '', location.pathname);
     renderRoster(3, $('blueRoster')); renderRoster(2, $('redRoster')); renderRoster(0, $('spectatorRoster'));
-    renderQueue();
     const admin = !!self()?.admin, playing = room.status === 'playing', me = self();
     if (me && [0, 2, 3].includes(me.preferredTeam)) selectedPreference = me.preferredTeam;
     $('hostControls').hidden = !admin;
     $('adminMatchControls').hidden = !admin;
     updateSettings(); syncPitch(room.state);
     $('startMatch').hidden = room.status !== 'lobby';
-    $('abortMatch').hidden = !playing;
+    $('abortMatch').hidden = !playing || !admin;
+    $('abortMatch').disabled = !isOpen();
     $('rematchMatch').hidden = room.status !== 'finished';
     const canStart = !!room.canStart;
     $('startMatch').disabled = !canStart || !isOpen(); $('rematchMatch').disabled = !canStart || !isOpen();
     setText($('modeLabel'), modeName());
     setText($('lobbyStateLabel'), room.status === 'playing' ? 'IN GAME' : room.status === 'voting' ? 'VOTING' : room.status === 'results' ? 'RESULTS' : 'LOBBY');
     $('spectate').disabled = !isOpen() || !me?.team && !me?.queued;
-    $('joinQueue').disabled = !isOpen() || !!me?.team || (!!me?.queued && !me.queueTeam);
+    for (const [id, team] of [['joinBlue', 3], ['joinRed', 2]]) {
+        $(id).disabled = !isOpen() || me?.team === team && room.status === 'lobby';
+        setText($(id), playing && !me?.team ? 'Join ' + teamName(team) + ' next game' : 'Join ' + teamName(team));
+    }
     const readyEligible = !!(me?.connected && (me.team || (room.mode === 'rockets' && me.queued)));
     $('readyButton').disabled = !isOpen() || room.status !== 'lobby' || !readyEligible;
     $('readyButton').setAttribute('aria-pressed', String(!!me?.ready));
@@ -513,10 +520,9 @@ function applyRoom(next) {
     setText($('readySummary'), room.status === 'voting' ? 'Choose the next mode on the pitch, then ready up.'
         : room.status === 'results' ? 'Results are on the pitch. The next mode vote starts shortly.'
         : playing ? room.mode === 'rockets' ? (room.rockets?.participantIds?.includes(memberId) ? 'Your Rockets turn follows join order.' : 'New arrivals play in the next game.')
-            : me?.queued ? 'You will join at the next kickoff with an available place.' : 'Players can vote to rebalance if someone leaves.'
-        : !active.length ? 'Join the queue to play.' : waiting ? active.filter(member => member.ready).length + ' / ' + active.length + ' ready.' + (active.length === 1 ? ' You can practise solo.' : ' Everyone playing must be ready.') : 'Everyone is ready. Starting…');
+            : me?.queued ? 'Spectating until the next game.' : 'Players can vote to rebalance if someone leaves.'
+        : !active.length ? 'Join a team to play.' : waiting ? active.filter(member => member.ready).length + ' / ' + active.length + ' ready.' + (active.length === 1 ? ' You can practise solo.' : ' Everyone playing must be ready.') : 'Everyone is ready. Starting…');
     $('chatInput').disabled = !isOpen(); $('sendChat').disabled = !isOpen();
-    freeplay.setSettings(room.settings);
     if (room.state) acceptState(room.state, tick, lastInputs);
     else {
         lastState = null; predicted = null; snapshots = []; lastScores = [0, 0, 0, 0];
@@ -527,6 +533,7 @@ function applyRoom(next) {
         canvas.focus({preventScroll: true});
     }
     renderGamePanels(); updateMatchStatus();
+    if (oldStatus !== room.status && room.status !== 'playing') requestAnimationFrame(() => {$('roomPanel').scrollTop = 0;});
 }
 
 function updateMatchStatus() {
@@ -534,7 +541,7 @@ function updateMatchStatus() {
     if (!memberId) text = account ? 'Watching the pitch. Join when you are ready.' : 'Watch the pitch, then sign in to join.';
     else if (room) {
         const me = self();
-        const role = me?.team ? 'Playing for ' + teamName(me.team) : me?.queued ? 'Queue position ' + me.queuePosition : 'Spectating';
+        const role = me?.team ? 'Playing for ' + teamName(me.team) : me?.queued ? 'Spectating until the next game' : 'Spectating';
         if (!ready) text = reconnecting ? 'Connection interrupted. Reconnecting…' : 'Connecting to room…';
         else if (room.status === 'voting') text = 'Vote for the next game on the pitch. ' + countdown(room.vote?.deadline) + 's remaining.';
         else if (room.status === 'results') text = modeName() + ' complete. Results are on the pitch.';
@@ -553,7 +560,7 @@ function updateMatchStatus() {
 }
 
 async function connectSession(joined) {
-    watcher.stop(); teamsOpen = true;
+    watcher.stop();
     const ownGeneration = ++generation;
     clearTimeout(retryTimer); retryTimer = null;
     socket?.close(1000, 'Replaced connection');
@@ -640,7 +647,7 @@ function returnToEntry(message = '') {
     clearTimeout(retryTimer); retryTimer = null;
     releaseInput(); socket?.close(1000, 'Left room'); socket = null;
     $('entryStatus').textContent = message; setText($('connectionStatus'), 'Not connected');
-    memberId = null; teamsOpen = false; predicted = null; smoothing.clear();
+    memberId = null; predicted = null; smoothing.clear(); setGameUiHidden(false);
     seenChat.clear(); chatMessages.length = 0; $('chatLog').replaceChildren();
     $('hostControls').hidden = true; $('adminMatchControls').hidden = true; $('chatInput').disabled = true; $('sendChat').disabled = true;
     settingsSignature = ''; settingsDirty = false; pendingSettingsSignature = null; leaderboardSignature = '';
@@ -674,9 +681,12 @@ $('joinRoomForm').addEventListener('submit', event => {event.preventDefault(); v
 $('leaveRoom').addEventListener('click', () => {send({type: 'leave'}); storeSeat(room?.id, null); returnToEntry(); history.replaceState(null, '', location.pathname);});
 $('spectate').addEventListener('click', () => send({type: 'spectate'}));
 for (const [id, team] of [['preferBlue', 3], ['preferRed', 2], ['preferRandom', 0]]) $(id).addEventListener('click', () => setTeamPreference(team));
-$('toggleTeams').addEventListener('click', () => {releaseInput(); teamsOpen = !teamsOpen; renderGamePanels();});
-$('closeTeams').addEventListener('click', () => {teamsOpen = false; renderGamePanels(); canvas.focus({preventScroll: true});});
-$('joinQueue').addEventListener('click', () => send({type: 'queue', team: selectedPreference}));
+for (const [id, team] of [['joinBlue', 3], ['joinRed', 2]]) $(id).addEventListener('click', () => {
+    selectedPreference = team;
+    try {localStorage.setItem('football-preferred-team:' + (account?.id || 'viewer'), String(team));} catch {}
+    send({type: 'team', team});
+});
+for (const id of ['toggleGameUi', 'toggleFullscreenUi']) $(id).addEventListener('click', () => setGameUiHidden(!gameUiHidden));
 $('readyButton').addEventListener('click', () => {warmAudio(); send({type: 'ready', ready: !self()?.ready});});
 for (const button of document.querySelectorAll('[data-mode-vote]')) button.addEventListener('click', () => {
     releaseInput(); send({type: 'modeVote', mode: button.dataset.modeVote});
@@ -708,7 +718,13 @@ $('copyRoomLink').addEventListener('click', async () => {
 });
 $('chatForm').addEventListener('submit', event => {
     event.preventDefault(); const text = $('chatInput').value.trim();
-    if (text && send({type: 'chat', text})) {$('chatInput').value = ''; canvas.focus({preventScroll: true});}
+    if (text && send({type: 'chat', text})) $('chatInput').value = '';
+    canvas.focus({preventScroll: true});
+});
+$('chatInput').addEventListener('keydown', event => {
+    if (!['Enter', 'NumpadEnter'].includes(event.code) || event.isComposing) return;
+    event.preventDefault(); event.stopPropagation();
+    if (!event.repeat && !chatEnterHeld) {chatEnterHeld = true; $('chatForm').requestSubmit();}
 });
 $('fullscreenToggle').addEventListener('click', async () => {
     try {if (document.fullscreenElement) await document.exitFullscreen(); else await $('pitchWrap').requestFullscreen({navigationUI: 'hide'}); canvas.focus({preventScroll: true});}
@@ -722,6 +738,12 @@ document.addEventListener('fullscreenchange', () => {
 });
 $('muteSound').addEventListener('click', () => {muted = !muted; $('muteSound').setAttribute('aria-pressed', String(muted)); setText($('muteSound'), muted ? 'Sound off' : 'Sound on'); if (!muted) warmAudio();});
 canvas.addEventListener('pointerdown', () => {canvas.focus({preventScroll: true}); warmAudio();});
+canvas.addEventListener('pointerup', event => {
+    if (!gameUiHidden || event.pointerType !== 'touch') return;
+    const now = performance.now();
+    if (restoreTouch && now - restoreTouch.at < 400 && Math.hypot(event.clientX - restoreTouch.x, event.clientY - restoreTouch.y) < 35) setGameUiHidden(false);
+    else restoreTouch = {at: now, x: event.clientX, y: event.clientY};
+});
 window.addEventListener('keydown', event => {
     if (!capturingKey) return;
     event.preventDefault(); event.stopImmediatePropagation();
@@ -733,20 +755,24 @@ window.addEventListener('keydown', event => {
     capturingKey = null; renderBindingFields(); setText($('keybindStatus'), 'Unsaved controls. Save to apply them to football.');
 }, true);
 window.addEventListener('keydown', event => {
-    if (event.code === 'Escape') releaseInput();
-    if (event.code === 'Enter' && !editable(event.target) && memberId) {event.preventDefault(); releaseInput(); $('chatInput').focus(); return;}
+    if (event.code === 'Escape') {releaseInput(); if (gameUiHidden) setGameUiHidden(false);}
+    if (['Enter', 'NumpadEnter'].includes(event.code) && !editable(event.target) && memberId) {
+        event.preventDefault();
+        if (!event.repeat && !chatEnterHeld) {chatEnterHeld = true; releaseInput(); if (gameUiHidden) setGameUiHidden(false); $('chatInput').focus();}
+        return;
+    }
     if (event.code === 'Escape' && event.target === $('chatInput')) {releaseInput(); canvas.focus({preventScroll: true}); return;}
     if (!keys.has(canonicalBindingCode(event.code)) || editable(event.target) || !isOpen() || !self()?.team) return;
     event.preventDefault(); held.add(event.code); updateInput(); warmAudio();
 });
-window.addEventListener('keyup', event => {if (held.delete(event.code)) {event.preventDefault(); updateInput();}});
-window.addEventListener('blur', releaseInput);
+window.addEventListener('keyup', event => {if (['Enter', 'NumpadEnter'].includes(event.code)) chatEnterHeld = false; if (held.delete(event.code)) {event.preventDefault(); updateInput();}});
+window.addEventListener('blur', () => {chatEnterHeld = false; releaseInput();});
 $('filterProfanity').addEventListener('change', () => {
     try {localStorage.setItem('football-profanity-filter', String($('filterProfanity').checked));} catch {}
     renderChat();
 });
 $('resetKeybinds').addEventListener('click', () => {
-    capturingKey = null; draftBindings = copyBindings(DEFAULT_KEYBINDS); renderBindingFields();
+    capturingKey = null; draftBindings = copyBindings({...DEFAULT_KEYBINDS, action2: []}); renderBindingFields();
     setText($('keybindStatus'), 'Default keys restored. Save to apply them.');
 });
 $('saveKeybinds').addEventListener('click', () => {
@@ -857,9 +883,9 @@ function draw(now) {
             predicted = physics.step(predicted, predictionInput()); lastPredictionAt += 1000 / C.TICK_RATE; predictionSteps++;
         }
     }
-    const live = lastState && (memberId || now - lastSnapshotAt < 1500);
-    const display = live ? interpolated(now) : freeplay.step(now), authoritative = live ? lastState : null;
-    if (!live) syncPitch(display);
+    // Both members and public viewers render the same server state. A stalled
+    // stream freezes the last real frame rather than replacing it with bots.
+    const display = interpolated(now), authoritative = lastState;
     context.setTransform(1, 0, 0, 1, 0, 0);
     context.drawImage(pitch, 0, 0);
     context.setTransform(viewport.ratio, 0, 0, viewport.ratio, 0, 0);
@@ -882,7 +908,7 @@ function draw(now) {
             context.fillStyle = blue ? '#2d69b2' : '#ad3636'; context.fill();
             const action = slot === ownSlot ? flags & 16 : (lastInputs[slot] || 0) & 16;
             context.strokeStyle = action ? '#ffffff' : blue ? '#448aff' : '#d32f2f'; context.lineWidth = 2.5; context.stroke();
-            const member = live ? room?.members.find(member => member.slot === slot) : null;
+            const member = room?.members.find(member => member.slot === slot);
             context.fillStyle = '#ffffff'; context.font = 'bold 9px Arial, sans-serif'; context.textAlign = 'center';
             context.fillText(Array.from(member?.name || display.players?.[slot]?.name || '?')[0].toUpperCase(), x, y + 0.5);
             context.font = '9px Arial, sans-serif'; context.fillStyle = 'rgba(255,255,255,.9)';
@@ -950,7 +976,7 @@ const accountMenu = initFootballAccount({
     onLogout: async () => {if (memberId) {send({type: 'leave'}); storeSeat(room.id, null); returnToEntry();}},
     onError: showNotice,
     onLoginClosed: () => {joinAfterLogin = false;},
-    onLoginOpened: () => {releaseInput(); if (capturingKey) {capturingKey = null; renderBindingFields();}},
+    onLoginOpened: () => {setGameUiHidden(false); releaseInput(); if (capturingKey) {capturingKey = null; renderBindingFields();}},
 });
 $('footballApp').dataset.ready = 'true';
 watcher.start();

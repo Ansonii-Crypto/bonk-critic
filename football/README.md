@@ -3,8 +3,9 @@
 The unlisted game page is available at `/football/`. It is excluded from the
 site navigation and asks search engines not to index it. Everyone visiting this
 link watches the same shared football pitch. Watching does not reserve a place
-or receive room chat. When no live game is available, a local freeplay scene
-uses the same native physics behind the join overlay.
+or receive room chat. The join screen shows the actual server match; there
+are no demo players. If the live stream stalls, the last real frame remains
+visible while the viewer reconnects.
 
 ## Playing
 
@@ -16,10 +17,11 @@ spectators can watch. Voting lasts fifteen seconds, or ends sooner when every
 eligible player has voted. A tie selects Balanced teams.
 
 Balanced teams keeps the sides as even as possible, with up to four players per
-side. A single player can start a practice game. New arrivals join the queue and
-take an available place at the next kickoff. Lobby assignments keep team sizes
+side. A single player can start a practice game. New arrivals remain in
+Spectators until the next game, including across goals and rebalances. Lobby assignments keep team sizes
 within one player while moving as few existing players as possible. Players
-can opt out and spectate. The Teams overlay includes a Blue or Red preference,
+can opt out and spectate. Each team has a Join button underneath its players;
+Spectate opts out of the next game. The Teams overlay includes a Blue or Red preference,
 with Random centred below. Preferences are honoured when compatible with even
 teams; they do not override the balancing rules.
 
@@ -33,8 +35,8 @@ start or end a game.
 If a Balanced teams player leaves, a fifteen-second Yes/No vote asks the
 remaining participants whether to rebalance. A majority voting Yes starts a
 fresh kickoff with even teams and preserves the score. No, a tie, or timeout
-continues with the current assignments for the rest of that game. Waiting
-players can still fill vacancies.
+continues with the current assignments for the rest of that game. Rebalancing
+only moves players already on the pitch; waiting spectators enter the next game.
 
 Game results appear over the dimmed pitch for ten seconds, followed by another
 mode vote and the next lobby. The server owns phase deadlines and voting
@@ -43,15 +45,15 @@ eligibility.
 ## Rockets
 
 Every participant gets one attacking turn in server-recorded join order. The
-attacker chooses Blue, Red or Random, with up to four other participants
-defending the opposite side. Random alternates shooting sides in join order. Other
+attacker chooses Blue, Red or Random. Only that attacker is on the pitch;
+everyone else watches. Random alternates shooting sides in join order. Other
 participants wait for their turns; new arrivals enter the next game. Each turn
 allows thirty seconds of active play, excluding kickoff and goal celebration.
 A goal or timeout ends the turn. Solo Rockets is also supported.
 
 The current attacker can change shooting sides once per turn. This restarts
 the kickoff while preserving their remaining active time, turn and queue
-position. Further preference changes apply to a future turn. Defenders can
+position. Further preference changes apply to a future turn. Waiting players can
 also save a preferred side for their own attacking turn.
 
 A successful goal posts a system chat message such as `Player reached 19.6 m/s.`
@@ -71,11 +73,19 @@ their leaderboard entry. A resumed seat can join the following game.
 
 Move with WASD or the arrow keys. X, Space and Shift kick; releasing the key
 rearms the next successful kick. Holding a kick reduces movement force to 70%.
-Z supplies no movement force, allowing normal damping to slow the player.
-Enter focuses room chat and Escape releases controls. Touch buttons support
-holding movement and kick together. Fullscreen, sound, Teams and Leave controls
+The obsolete brake action is disabled; Z remains available to bind to another
+action. Quick heavy presses are retained until a physics tick can process them,
+including while several movement keys are held.
+Enter focuses room chat; Enter again sends the message and focuses the game,
+including when the input is empty. Holding Enter cannot reopen chat after sending.
+Escape releases controls. Touch buttons support
+holding movement and kick together. Fullscreen, sound and Leave controls
 sit over the pitch. Fullscreen expands the pitch and its overlays to the entire
 viewport; Exit fullscreen or the browser's Escape key returns to the page.
+Teams are shown automatically between games. Hide game UI, beside the page
+heading, hides every overlay and control inside the pitch while preserving the
+game. Escape, or a double tap on a touch screen, restores those controls.
+The page scrolls underneath its header.
 
 Visitors can watch without signing in. Joining requires a verified Bonk
 identity; anonymous joins are rejected on the server. Administrator controls
@@ -92,7 +102,8 @@ their skin, Profile, eligible Admin tools and Log out.
 
 Bonk's successful login response contains its serialized account controls.
 The Worker decodes supported versions 1–6 and saves only the validated movement,
-kick and brake keys plus the cursing-filter preference. Existing accounts need
+keys plus the cursing-filter preference. Legacy swing/brake bindings can remain
+in imported account data for compatibility but are ignored by football. Existing accounts need
 to sign out and sign in once to import these settings. A later login refreshes
 changes made on Bonk. Invalid or missing controls fall back to the normal keys
 without rejecting a valid login.

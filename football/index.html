@@ -8,11 +8,11 @@
         <meta name="description" content="The shared football pitch on Bonk Critic.">
         <title>Football | Bonk Critic</title>
         <link rel="stylesheet" href="../account.css">
-        <link rel="stylesheet" href="./football.css?v=20261127-football-7">
+        <link rel="stylesheet" href="./football.css?v=20261127-football-8">
         <script src="../config.js"></script>
         <script src="../focus.js" defer></script>
         <script src="../skin-renderer.js" defer></script>
-        <script type="module" src="./client.js?v=20261127-football-7"></script>
+        <script type="module" src="./client.js?v=20261127-football-8"></script>
     </head>
     <body>
         <div id="footballApp" class="football-app">
@@ -32,7 +32,10 @@
                         <h1>Football</h1>
                         <p class="page-description">One pitch. Everyone plays here.</p>
                     </div>
-                    <span id="connectionStatus" class="connection-status" role="status">Loading…</span>
+                    <div class="page-heading-actions">
+                        <span id="connectionStatus" class="connection-status" role="status">Loading…</span>
+                        <button id="toggleGameUi" type="button" class="button-secondary button-small" aria-controls="pitchWrap" aria-pressed="false" title="Escape or double-tap the pitch to restore controls.">Hide game UI</button>
+                    </div>
                 </div>
 
                 <div class="game-layout">
@@ -41,11 +44,12 @@
                             <canvas id="footballCanvas" width="730" height="500" tabindex="0" aria-label="Football game. Blue attacks from the left; Red attacks from the right.">Your browser needs canvas support to play football.</canvas>
 
                             <div id="fieldToolbar" class="field-toolbar" role="group" aria-label="Pitch options">
-                                <button id="toggleTeams" type="button" class="field-tool" aria-controls="teamsOverlay" aria-expanded="false" hidden>Teams</button>
                                 <button id="muteSound" type="button" class="field-tool" aria-pressed="false">Sound on</button>
                                 <button id="fullscreenToggle" type="button" class="field-tool">Fullscreen</button>
                                 <button id="exitFullscreen" type="button" class="field-tool field-exit">Exit fullscreen</button>
+                                <button id="toggleFullscreenUi" type="button" class="field-tool field-ui-toggle" aria-pressed="false" title="Escape or double-tap the pitch to restore controls.">Hide UI</button>
                                 <button id="leaveRoom" type="button" class="field-tool field-leave" hidden>Leave</button>
+                                <button id="abortMatch" type="button" class="field-tool field-leave" hidden>End game</button>
                             </div>
 
                             <section id="roomEntry" class="pitch-overlay entry-overlay" aria-labelledby="entryTitle">
@@ -62,14 +66,14 @@
                             </section>
 
                             <div id="teamsOverlay" class="pitch-overlay teams-overlay" role="region" aria-labelledby="roomTitle" hidden>
-                                <section id="roomPanel" class="panel room-panel teams-card" aria-labelledby="roomTitle" hidden>
+                                <section id="roomPanel" class="room-panel teams-card" aria-labelledby="roomTitle" hidden>
                                     <div class="room-heading">
                                         <div>
                                             <p class="eyebrow">THE SHARED PITCH</p>
                                             <h2 id="roomTitle">Football teams</h2>
                                             <span id="roomCodeDisplay" class="sr-only"></span>
                                         </div>
-                                        <div class="room-heading-actions"><button id="copyRoomLink" type="button" class="button-secondary button-small">Invite friends</button><button id="closeTeams" type="button" class="button-secondary button-small" aria-label="Close teams">Close</button></div>
+                                        <div class="room-heading-actions"><button id="copyRoomLink" type="button" class="button-secondary button-small">Invite friends</button></div>
                                     </div>
 
                                     <section id="teamPreferencePanel" class="team-preference-panel" aria-labelledby="teamPreferenceTitle">
@@ -90,16 +94,25 @@
                                         <p id="modeLabel" class="mode-label">Balanced teams</p>
                                         <div class="team-lists">
                                             <section class="team-section blue-team" aria-labelledby="blueTeamTitle">
-                                                <div class="team-heading"><h3 id="blueTeamTitle"><span class="team-dot" aria-hidden="true"></span>Blue team</h3></div>
-                                                <ul id="blueRoster" class="roster" aria-label="Blue team players"></ul>
+                                                <div class="team-roster-card">
+                                                    <div class="team-heading"><h3 id="blueTeamTitle"><span class="team-dot" aria-hidden="true"></span>Blue team</h3></div>
+                                                    <ul id="blueRoster" class="roster" aria-label="Blue team players"></ul>
+                                                </div>
+                                                <button id="joinBlue" type="button" class="join-team join-blue button-small">Join Blue</button>
                                             </section>
                                             <section class="team-section red-team" aria-labelledby="redTeamTitle">
-                                                <div class="team-heading"><h3 id="redTeamTitle"><span class="team-dot" aria-hidden="true"></span>Red team</h3></div>
-                                                <ul id="redRoster" class="roster" aria-label="Red team players"></ul>
+                                                <div class="team-roster-card">
+                                                    <div class="team-heading"><h3 id="redTeamTitle"><span class="team-dot" aria-hidden="true"></span>Red team</h3></div>
+                                                    <ul id="redRoster" class="roster" aria-label="Red team players"></ul>
+                                                </div>
+                                                <button id="joinRed" type="button" class="join-team join-red button-small">Join Red</button>
                                             </section>
                                             <section class="team-section spectator-team" aria-labelledby="spectatorsTitle">
-                                                <div class="team-heading"><h3 id="spectatorsTitle">Spectators</h3><button id="spectate" type="button" class="button-secondary button-small">Watch only</button></div>
-                                                <ul id="spectatorRoster" class="roster" aria-label="Spectators"></ul>
+                                                <div class="team-roster-card">
+                                                    <div class="team-heading"><h3 id="spectatorsTitle">Spectators</h3></div>
+                                                    <ul id="spectatorRoster" class="roster" aria-label="Spectators"></ul>
+                                                </div>
+                                                <button id="spectate" type="button" class="join-team button-secondary button-small">Spectate</button>
                                             </section>
                                         </div>
                                         <div class="ready-controls">
@@ -108,44 +121,38 @@
                                         </div>
                                         <div id="adminMatchControls" class="admin-match-actions" role="group" aria-label="Admin match controls" hidden>
                                             <button id="startMatch" type="button" class="button-primary" hidden>Start match</button>
-                                            <button id="abortMatch" type="button" class="button-danger" hidden>Abort match</button>
                                             <button id="rematchMatch" type="button" class="button-primary" hidden>Play again</button>
                                         </div>
                                     </section>
 
-                                    <section id="queuePanel" class="queue-panel" aria-labelledby="queueTitle">
-                                        <div class="section-heading"><h3 id="queueTitle">Next kickoff</h3><span class="section-note">QUEUE</span></div>
-                                        <ol id="queueRoster" class="roster queue-roster" aria-label="Players waiting for the next kickoff"></ol>
-                                        <button id="joinQueue" type="button" class="button-secondary button-small">Join the queue</button>
-                                    </section>
+                                    <div id="gameOverlay" class="game-overlay" role="region" aria-labelledby="overlayTitle" aria-describedby="overlayDescription" hidden>
+                                        <div class="field-overlay-card" tabindex="-1">
+                                            <div class="overlay-heading"><p class="eyebrow">THE NEXT KICKOFF</p><span id="overlayCountdown" class="overlay-countdown" role="timer" aria-live="off"></span></div>
+                                            <h2 id="overlayTitle">Choose the next game.</h2>
+                                            <p id="overlayDescription" class="overlay-description">Vote for the mode you want to play next.</p>
+                                            <section id="modeVotePanel" class="mode-vote-panel" aria-label="Vote for the next game mode">
+                                                <button type="button" class="mode-vote-button" data-mode-vote="balanced" aria-pressed="false">
+                                                    <span class="mode-vote-heading"><span class="mode-title">Balanced teams</span><span class="vote-tally"><span id="balancedVoteCount">0</span> votes</span></span>
+                                                    <span class="mode-description">Teams scale from 1v1 to 4v4 with the lobby. Solo practice is welcome too.</span>
+                                                    <span class="mode-vote-action">Vote for teams <span aria-hidden="true">→</span></span>
+                                                </button>
+                                                <button type="button" class="mode-vote-button" data-mode-vote="rockets" aria-pressed="false">
+                                                    <span class="mode-vote-heading"><span class="mode-title">Rockets</span><span class="vote-tally"><span id="rocketsVoteCount">0</span> votes</span></span>
+                                                    <span class="mode-description">Take turns shooting for 30 seconds each, in the order you joined.</span>
+                                                    <span class="mode-vote-action">Vote for Rockets <span aria-hidden="true">→</span></span>
+                                                </button>
+                                            </section>
+                                            <section id="resultsPanel" class="results-panel" aria-label="Game results" hidden><p id="resultsSummary" class="results-summary"></p><ol id="rocketLeaderboard" class="rocket-leaderboard" aria-label="Rockets leaderboard"></ol></section>
+                                            <p id="votingWaiting" class="voting-waiting" role="status">Join football to vote for the next game.</p>
+                                        </div>
+                                    </div>
+
                                 </section>
                             </div>
 
                             <div id="rocketsHud" class="rockets-hud" aria-label="Rockets turn" hidden>
                                 <div class="rocket-turn-info"><span class="hud-label">ROCKETS · SHOOTING NOW</span><strong id="rocketTurnName"></strong></div>
                                 <span id="rocketTurnTimer" class="rocket-turn-timer" role="timer" aria-live="off"></span>
-                            </div>
-
-                            <div id="gameOverlay" class="game-overlay" role="region" aria-labelledby="overlayTitle" aria-describedby="overlayDescription" hidden>
-                                <div class="field-overlay-card" tabindex="-1">
-                                    <div class="overlay-heading"><p class="eyebrow">THE NEXT KICKOFF</p><span id="overlayCountdown" class="overlay-countdown" role="timer" aria-live="off"></span></div>
-                                    <h2 id="overlayTitle">Choose the next game.</h2>
-                                    <p id="overlayDescription" class="overlay-description">Vote for the mode you want to play next.</p>
-                                    <section id="modeVotePanel" class="mode-vote-panel" aria-label="Vote for the next game mode">
-                                        <button type="button" class="mode-vote-button" data-mode-vote="balanced" aria-pressed="false">
-                                            <span class="mode-vote-heading"><span class="mode-title">Balanced teams</span><span class="vote-tally"><span id="balancedVoteCount">0</span> votes</span></span>
-                                            <span class="mode-description">Teams scale from 1v1 to 4v4 with the lobby. Solo practice is welcome too.</span>
-                                            <span class="mode-vote-action">Vote for teams <span aria-hidden="true">→</span></span>
-                                        </button>
-                                        <button type="button" class="mode-vote-button" data-mode-vote="rockets" aria-pressed="false">
-                                            <span class="mode-vote-heading"><span class="mode-title">Rockets</span><span class="vote-tally"><span id="rocketsVoteCount">0</span> votes</span></span>
-                                            <span class="mode-description">Take turns shooting for 30 seconds each, in the order you joined.</span>
-                                            <span class="mode-vote-action">Vote for Rockets <span aria-hidden="true">→</span></span>
-                                        </button>
-                                    </section>
-                                    <section id="resultsPanel" class="results-panel" aria-label="Game results" hidden><p id="resultsSummary" class="results-summary"></p><ol id="rocketLeaderboard" class="rocket-leaderboard" aria-label="Rockets leaderboard"></ol></section>
-                                    <p id="votingWaiting" class="voting-waiting" role="status">Join football to vote for the next game.</p>
-                                </div>
                             </div>
 
                             <div id="rebalanceNotice" class="rebalance-overlay" hidden>
@@ -173,7 +180,7 @@
                                     <button class="touch-button touch-down" type="button" data-control="down" aria-label="Move down"><span aria-hidden="true">↓</span></button>
                                     <button class="touch-button touch-right" type="button" data-control="right" aria-label="Move right"><span aria-hidden="true">→</span></button>
                                 </div>
-                                <div class="action-pad" role="group" aria-label="Ball control"><button class="touch-button touch-brake" type="button" data-control="action2" aria-label="Brake">Brake</button><button class="touch-button touch-kick" type="button" data-control="action" aria-label="Kick">Kick</button></div>
+                                <div class="action-pad" role="group" aria-label="Ball control"><button class="touch-button touch-kick" type="button" data-control="action" aria-label="Kick">Kick</button></div>
                             </div>
                         </div>
 
@@ -182,11 +189,10 @@
 
                         <div class="below-pitch-controls">
                             <details class="controls-help">
-                                <summary><span>How to play</span><span class="help-preview">Move · Kick · Brake</span></summary>
+                                <summary><span>How to play</span><span class="help-preview">Move · Kick</span></summary>
                                 <div class="controls-grid">
                                     <div><span class="control-label">MOVE</span><p id="moveKeyHelp"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or arrow keys</p></div>
                                     <div><span class="control-label">KICK</span><p id="kickKeyHelp"><kbd>X</kbd>, <kbd>Space</kbd> or <kbd>Shift</kbd></p></div>
-                                    <div><span class="control-label">BRAKE</span><p id="brakeKeyHelp"><kbd>Z</kbd> to slow down</p></div>
                                     <div><span class="control-label">CHAT / FOCUS</span><p><kbd>Enter</kbd> to chat · <kbd>Esc</kbd> to release controls</p></div>
                                 </div>
                                 <p class="help-note">Click the pitch to focus the game. On a touch screen, use the controls on the pitch.</p>

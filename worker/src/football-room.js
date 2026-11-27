@@ -17,7 +17,7 @@ const privileged = new Set(['assign', 'settings', 'start', 'rematch', 'abort', '
 export class FootballRoom {
     constructor(ctx, env) {
         this.ctx = ctx; this.env = env; this.room = null;
-        this.connections = new Map(); this.watchers = new Map(); this.tickets = new Map(); this.inputs = []; this.inputTimes = []; this.sequences = []; this.playerLeaves = new Set();
+        this.connections = new Map(); this.watchers = new Map(); this.tickets = new Map(); this.inputs = []; this.inputTimes = []; this.effectiveInputs = []; this.pendingHeavy = []; this.sequences = []; this.playerLeaves = new Set();
         this.physics = new FootballPhysics(); this.timer = null; this.lastPumpAt = 0; this.accumulator = 0; this.tickNumber = 0; this.lastSaved = 0; this.persistChain = Promise.resolve();
         this.ready = ctx.blockConcurrencyWhile(async () => {
             const saved = await ctx.storage.get('checkpoint');
@@ -134,7 +134,7 @@ export class FootballRoom {
         const member = this.room.members.find(item => item.id === ticket.memberId); if (!member) return json({error:'Lobby membership expired.'}, 403);
         const pair = new WebSocketPair(), client = pair[0], server = pair[1]; server.accept(); const old = this.connections.get(member.id);
         const connection = {socket:server, memberId:member.id, tokens:100, replenished:Date.now(), lastMessageAt:Date.now(), chatTimes:[], errors:0};
-        this.connections.set(member.id, connection); this.inputs[member.slot] = 0; this.inputTimes[member.slot] = 0; this.sequences[member.slot] = -1;
+        this.connections.set(member.id, connection); this.clearInput(member.slot); this.sequences[member.slot] = -1;
         member.connected = true; member.disconnectedAt = null; member.pendingUntil = 0; if (member.team) this.clearReadiness();
         if (old) {try {old.socket.close(4001, 'Connected in another tab.');} catch {}}
         server.addEventListener('message', event => {void this.message(connection, event.data).catch(() => this.send(server, {type:'error', error:'Unable to process lobby action.'}));});
@@ -184,7 +184,10 @@ export class FootballRoom {
         if (message.type === 'input') {
             if (!Number.isSafeInteger(message.seq) || message.seq < 0 || message.seq > 2147483647 || !Number.isInteger(message.flags) || message.flags < 0 || message.flags > 63) {this.reject(connection, 'Invalid controls.'); return;}
             if (message.seq <= (this.sequences[member.slot] ?? -1)) return;
-            this.sequences[member.slot] = message.seq; this.inputs[member.slot] = this.room.status === 'playing' && member.team ? message.flags : 0; this.inputTimes[member.slot] = now; this.room.lastActive = now; return;
+            const flags = this.room.status === 'playing' && member.team ? message.flags & 31 : 0, previous = this.inputs[member.slot] || 0;
+            if (this.room.state?.ftu === -1 && this.room.status === 'playing' && member.team && (flags & 16) && !(previous & 16)) this.pendingHeavy[member.slot] = true;
+            else if (this.room.status !== 'playing' || this.room.state?.ftu !== -1 || !member.team) this.pendingHeavy[member.slot] = false;
+            this.sequences[member.slot] = message.seq; this.inputs[member.slot] = flags; this.inputTimes[member.slot] = now; this.room.lastActive = now; return;
         }
         if (message.type === 'ping') {this.send(connection.socket, {type:'pong', sentAt:typeof message.sentAt === 'number' && Number.isFinite(message.sentAt) ? message.sentAt : null, serverTime:now}); return;}
         if (message.type === 'chat') {
@@ -194,6 +197,12 @@ export class FootballRoom {
             this.room.lastActive = now; this.broadcast(chat); this.background(this.persist()); return;
         }
         if (message.type === 'leave') {this.removeMember(member.id, 'Left the lobby.'); await this.changed(); return;}
+        if (message.type === 'team' && (message.team === 2 || message.team === 3)) {
+            member.preferredTeam = message.team; member.queueTeam = message.team;
+            if (this.room.status === 'lobby') {this.setQueue(member, true, message.team); this.promoteQueue();}
+            else if (!member.team && !member.queued) this.setQueue(member, true, message.team);
+            this.updateVoteEligibility(); await this.changed(); return;
+        }
         if (['team', 'queue', 'spectate'].includes(message.type)) {
             const preference = message.type === 'spectate' ? 0 : message.team ?? 0;
             if (![0, 2, 3].includes(preference)) {this.reject(connection, 'Choose Blue, Red, or any team.'); return;}
@@ -236,15 +245,19 @@ export class FootballRoom {
         await this.changed();
     }
     clearReadiness() {for (const member of this.room.members) member.ready = false;}
+    clearInput(slot = null) {
+        if (Number.isInteger(slot)) {this.inputs[slot] = 0; this.inputTimes[slot] = 0; this.effectiveInputs[slot] = 0; this.pendingHeavy[slot] = false;}
+        else {this.inputs = []; this.inputTimes = []; this.effectiveInputs = []; this.pendingHeavy = [];}
+    }
     setQueue(member, queued, preference) {
         const wasActive = Boolean(member.team);
         if (wasActive) this.playerLeaves.add(member.slot); member.team = 0; member.ready = false; member.queueTeam = preference;
         if (queued && !member.queued) member.queueOrder = this.room.nextQueueOrder++;
         member.queued = queued; if (!queued) member.queueOrder = null;
-        this.inputs[member.slot] = 0; if (wasActive) this.clearReadiness();
+        this.clearInput(member.slot); if (wasActive) this.clearReadiness();
     }
     promoteQueue() {
-        if (this.room.status === 'playing' && this.room.mode === 'balanced' && this.room.balanceDeferred) return this.fillVacancies();
+        if (this.room.status === 'playing') return false;
         const selection = balancedTeamAssignments(this.room.members, TEAM_SIZE), assignments = this.preferredAssignments(selection.assignments);
         let changed = false;
         for (const member of this.room.members) {
@@ -269,22 +282,20 @@ export class FootballRoom {
         }
         return best;
     }
-    fillVacancies() {
-        const counts = {2:this.room.members.filter(member => member.team === 2).length, 3:this.room.members.filter(member => member.team === 3).length}; let changed = false;
-        for (const member of this.room.members.filter(item => item.queued && item.connected).sort((a, b) => a.queueOrder - b.queueOrder)) {
-            const team = counts[3] <= counts[2] ? 3 : 2; if (counts[team] >= TEAM_SIZE) break;
-            member.team = team; member.queued = false; member.queueOrder = null; member.ready = false; counts[team]++; changed = true;
-        }
-        return changed;
+    rebalanceActivePlayers() {
+        const active = this.room.members.filter(member => member.team === 2 || member.team === 3);
+        const selection = balancedTeamAssignments(active.map(member => ({...member, connected:true})), TEAM_SIZE), assignments = this.preferredAssignments(selection.assignments);
+        for (const member of active) {const team = assignments.get(member.id); if (team && team !== member.team) {this.playerLeaves.add(member.slot); member.team = team;}}
+        this.clearReadiness();
     }
     matchSettings() {return validateMatchSettings({}, this.room.settings).settings;}
     startMatch() {
-        this.inputs = []; this.inputTimes = []; this.playerLeaves.clear(); this.tickNumber = 0; this.clearReadiness(); this.room.status = 'playing'; this.room.balanceDeferred = false; this.room.winner = null; this.room.vote = null; this.room.results = null; this.room.rebalanceVote = null;
+        this.promoteQueue(); this.clearInput(); this.playerLeaves.clear(); this.tickNumber = 0; this.clearReadiness(); this.room.status = 'playing'; this.room.balanceDeferred = false; this.room.winner = null; this.room.vote = null; this.room.results = null; this.room.rebalanceVote = null;
         if (this.room.mode === 'rockets') {
             const participants = rocketsRoster(this.room.members);
             this.room.rockets = {participantIds:participants.map(member => member.id), records:{}, completedIds:[], attackerId:null, turnTicksLeft:ROCKET_TURN_TICKS, turnIndex:0, totalTurns:participants.length, turnEnded:false};
             this.startRocketTurn();
-        } else {this.room.rockets = null; this.promoteQueue(); this.room.state = createState(this.activePlayers(), {settings:this.matchSettings()});}
+        } else {this.room.rockets = null; this.room.state = createState(this.activePlayers(), {settings:this.matchSettings()});}
         this.ensureTimer();
     }
     voteEligible() {return this.room.members.filter(member => member.connected && (member.team || member.queued));}
@@ -305,21 +316,24 @@ export class FootballRoom {
         this.room.mode = vote.counts.rockets > vote.counts.balanced ? 'rockets' : 'balanced'; this.room.modeSelected = true; this.room.vote = null; this.room.status = 'lobby'; this.room.state = null; this.room.winner = null; this.clearReadiness(); this.promoteQueue();
     }
     openRebalanceVote() {
-        if (!this.voteEligible().length) {this.abort('The game is waiting for players.'); this.room.modeSelected = false; return;}
+        if (!this.room.members.some(member => member.team)) {this.abort('The game is waiting for players.'); this.room.modeSelected = false; return;}
         if (!this.room.rebalanceVote) this.room.rebalanceVote = {id:crypto.randomUUID(), kind:'rebalance', deadline:Date.now() + REBALANCE_VOTE_TTL, votes:{}};
     }
     resolveRebalanceVote(timeout) {
+        if (!this.room.rebalanceVote) return;
+        if (timeout || this.room.rebalanceVote.deadline <= Date.now()) {this.room.rebalanceVote = null; this.room.balanceDeferred = true; return;}
         const vote = this.publicVote(this.room.rebalanceVote); if (!vote) return;
         const majority = Math.floor(vote.eligibleCount / 2) + 1;
         if (vote.counts.yes >= majority) {
             this.room.rebalanceVote = null; this.room.balanceDeferred = false; const scores = this.room.state?.scores.slice() || [0, 0, 0, 0];
             if (this.room.state?.fte >= 0 && [2, 3].some(team => scores[team] >= this.room.settings.scoreLimit)) return;
-            this.promoteQueue();
-            this.room.state = createState(this.activePlayers(), {settings:this.matchSettings()}); this.room.state.scores = scores; this.playerLeaves.clear(); this.inputs = [];
+            this.rebalanceActivePlayers();
+            this.room.state = createState(this.activePlayers(), {settings:this.matchSettings()}); this.room.state.scores = scores; this.playerLeaves.clear(); this.clearInput();
             this.broadcast({type:'notice', text:'Players voted to rebalance. A new kickoff begins.'});
-        } else if (timeout || vote.counts.no >= majority || vote.counts.yes + vote.counts.no === vote.eligibleCount) {this.room.rebalanceVote = null; this.room.balanceDeferred = true;}
+        } else if (vote.counts.no >= majority || vote.counts.yes + vote.counts.no === vote.eligibleCount) {this.room.rebalanceVote = null; this.room.balanceDeferred = true;}
     }
     updateVoteEligibility() {
+        if (this.room.rebalanceVote?.deadline <= Date.now()) this.resolveRebalanceVote(true);
         for (const vote of [this.room.vote, this.room.rebalanceVote]) if (vote) {
             const eligible = new Set(this.voteEligible().map(member => member.id)); for (const id of Object.keys(vote.votes)) if (!eligible.has(id)) delete vote.votes[id];
         }
@@ -345,17 +359,17 @@ export class FootballRoom {
         rockets.attackerTeam = this.rocketAttackerTeam(this.room.members.find(member => member.id === id), rockets.turnIndex); this.setupRocketRoles();
     }
     setupRocketRoles() {
-        const rockets = this.room.rockets, id = rockets.attackerId, defenders = rockets.participantIds.filter(candidate => candidate !== id).slice(0, TEAM_SIZE), defenderTeam = rockets.attackerTeam === 3 ? 2 : 3;
+        const rockets = this.room.rockets, id = rockets.attackerId;
         for (const member of this.room.members) {
             if (!rockets.participantIds.includes(member.id)) {
                 if (member.team) {member.team = 0; member.queued = true; member.queueOrder = this.room.nextQueueOrder++;}
                 continue;
             }
-            member.team = member.id === id ? rockets.attackerTeam : defenders.includes(member.id) ? defenderTeam : 0;
+            member.team = member.id === id ? rockets.attackerTeam : 0;
             member.queued = !member.team; if (member.queued && !member.queueOrder) member.queueOrder = this.room.nextQueueOrder++;
             if (!member.queued) member.queueOrder = null;
         }
-        this.inputs = []; this.inputTimes = []; this.playerLeaves.clear(); this.room.state = createState(this.activePlayers(), {settings:this.matchSettings()});
+        this.clearInput(); this.playerLeaves.clear(); this.room.state = createState(this.activePlayers(), {settings:this.matchSettings()});
     }
     completeRocketTurn() {
         const rockets = this.room.rockets; if (!rockets) return;
@@ -378,7 +392,7 @@ export class FootballRoom {
     finishGame(winner) {
         this.room.winner = winner; const board = this.publicRockets()?.leaderboard || [];
         this.room.results = {mode:this.room.mode, winner, winnerId:this.room.mode === 'rockets' ? board.find(row => row.scored)?.id || null : null, scores:this.room.state?.scores.slice() || [0, 0, 0, 0], leaderboard:board, unit:'m/s', deadline:Date.now() + RESULTS_TTL};
-        this.room.lastResult = {...this.room.results, finishedAt:Date.now()}; this.room.status = 'results'; this.inputs = []; this.clearReadiness(); this.room.rebalanceVote = null; this.ensureTimer(); this.broadcastRoom(); this.background(this.persist()); this.background(this.scheduleAlarm());
+        this.room.lastResult = {...this.room.results, finishedAt:Date.now()}; this.room.status = 'results'; this.clearInput(); this.clearReadiness(); this.room.rebalanceVote = null; this.ensureTimer(); this.broadcastRoom(); this.background(this.persist()); this.background(this.scheduleAlarm());
     }
     systemChat(text) {
         const chat = {type:'chat', id:crypto.randomUUID(), memberId:null, name:'Football', text, time:Date.now(), system:true}; this.room.lastActive = Date.now(); this.broadcast(chat);
@@ -389,7 +403,7 @@ export class FootballRoom {
     disconnect(connection) {
         if (this.connections.get(connection.memberId) !== connection) return; this.connections.delete(connection.memberId);
         const member = this.room?.members.find(item => item.id === connection.memberId); if (!member) return;
-        this.inputs[member.slot] = 0; member.connected = false; member.disconnectedAt = Date.now(); member.pendingUntil = 0;
+        this.clearInput(member.slot); member.connected = false; member.disconnectedAt = Date.now(); member.pendingUntil = 0;
         if (this.room.mode === 'rockets' && ['playing', 'results'].includes(this.room.status) && this.room.rockets?.participantIds.includes(member.id)) {
             // Queue first: a retained resumable member must not leave a ghost
             // disc when the next attacker recreates the authoritative state.
@@ -403,7 +417,7 @@ export class FootballRoom {
         const connection = this.connections.get(memberId); this.connections.delete(memberId);
         if (connection) {this.send(connection.socket, {type:'removed', reason}); try {connection.socket.close(4002, reason);} catch {}}
         for (const [key, ticket] of this.tickets) if (ticket.memberId === memberId) this.tickets.delete(key);
-        this.inputs[member.slot] = 0; this.sequences[member.slot] = -1; this.playerLeaves.add(member.slot); this.room.members = this.room.members.filter(item => item.id !== memberId);
+        this.clearInput(member.slot); this.sequences[member.slot] = -1; this.playerLeaves.add(member.slot); this.room.members = this.room.members.filter(item => item.id !== memberId);
         if (member.team) this.clearReadiness();
         if (this.room.status === 'playing') {
             if (this.room.mode === 'rockets') this.removeRocketParticipant(memberId);
@@ -412,7 +426,7 @@ export class FootballRoom {
         if (!['playing', 'results'].includes(this.room.status)) this.promoteQueue(); this.updateVoteEligibility();
         if (!this.canSimulate()) this.stopTimer();
     }
-    abort(reason) {this.room.status = 'lobby'; this.room.state = null; this.room.winner = null; this.room.vote = null; this.room.results = null; this.room.rockets = null; this.room.rebalanceVote = null; this.inputs = []; this.stopTimer(); this.clearReadiness(); this.promoteQueue(); this.broadcast({type:'notice', text:reason});}
+    abort(reason) {this.room.status = 'lobby'; this.room.state = null; this.room.winner = null; this.room.vote = null; this.room.results = null; this.room.rockets = null; this.room.rebalanceVote = null; this.clearInput(); this.stopTimer(); this.clearReadiness(); this.promoteQueue(); this.broadcast({type:'notice', text:reason});}
     async changed() {this.room.lastActive = Date.now(); this.broadcastRoom(); await this.persist(); await this.scheduleAlarm();}
     pruneTickets(now) {for (const [key, ticket] of this.tickets) if (ticket.expires <= now) this.tickets.delete(key);}
     sweep() {
@@ -460,10 +474,19 @@ export class FootballRoom {
             if ([2, 3].some(team => state.scores[team] >= this.room.settings.scoreLimit)) {
                 this.finishGame(state.scores[2] >= this.room.settings.scoreLimit ? 2 : 3); return;
             }
-            this.promoteQueue(); this.room.state = createState(this.activePlayers(), {settings:this.matchSettings()}); this.room.state.scores = state.scores.slice(); this.playerLeaves.clear();
+            this.room.state = createState(this.activePlayers(), {settings:this.matchSettings()}); this.room.state.scores = state.scores.slice(); this.playerLeaves.clear(); this.clearInput();
         } else {
-            const deadline = Date.now() - 1000; this.inputs.forEach((flags, slot) => {if ((this.inputTimes[slot] || 0) < deadline) this.inputs[slot] = 0;});
-            const controls = this.inputs.map(flags => ({left:Boolean(flags & 1), right:Boolean(flags & 2), up:Boolean(flags & 4), down:Boolean(flags & 8), action:Boolean(flags & 16), action2:Boolean(flags & 32)}));
+            const deadline = Date.now() - 1000; this.inputs.forEach((flags, slot) => {if ((this.inputTimes[slot] || 0) < deadline) this.clearInput(slot);});
+            this.effectiveInputs = this.inputs.map((flags, slot) => {
+                flags &= 31;
+                if (!state.discs[slot] || state.ftu !== -1) this.pendingHeavy[slot] = false;
+                else if (this.pendingHeavy[slot]) {
+                    if (state.discs[slot].kickReady === false) flags &= ~16;
+                    else {flags |= 16; this.pendingHeavy[slot] = false;}
+                }
+                return flags;
+            });
+            const controls = this.effectiveInputs.map(flags => ({left:Boolean(flags & 1), right:Boolean(flags & 2), up:Boolean(flags & 4), down:Boolean(flags & 8), action:Boolean(flags & 16)}));
             try {this.room.state = this.physics.step(state, controls, {playersLeft:[...this.playerLeaves]}); this.playerLeaves.clear();}
             catch {this.abort('The match stopped. Players can ready up again.'); this.broadcastRoom(); this.background(this.persist()); return;}
         }
@@ -483,7 +506,7 @@ export class FootballRoom {
     publishFrame(roundEnded = false) {
         this.tickNumber++; if (this.connections.size) this.room.lastActive = Date.now();
         if (this.tickNumber % 2 === 0) {
-            const frame = {type:'snapshot', tick:this.tickNumber, serverTime:Date.now(), status:this.room.status, mode:this.room.mode, winner:this.room.winner, rockets:this.publicRockets(), rebalanceVote:this.publicVote(this.room.rebalanceVote), state:this.room.state, inputs:Array.from({length:MAX_MEMBERS}, (_, slot) => this.inputs[slot] || 0)};
+            const frame = {type:'snapshot', tick:this.tickNumber, serverTime:Date.now(), status:this.room.status, mode:this.room.mode, winner:this.room.winner, rockets:this.publicRockets(), rebalanceVote:this.publicVote(this.room.rebalanceVote), state:this.room.state, inputs:Array.from({length:MAX_MEMBERS}, (_, slot) => this.effectiveInputs[slot] || 0)};
             for (const connection of this.connections.values()) {const member = this.room.members.find(item => item.id === connection.memberId); this.send(connection.socket, {...frame, ackSeq:this.sequences[member?.slot] ?? -1});}
             for (const watcher of this.watchers.values()) this.send(watcher.socket, frame);
         }
@@ -499,7 +522,7 @@ export class FootballRoom {
     async clearIdle() {
         this.stopTimer(); for (const connection of this.connections.values()) {try {connection.socket.close(4003, 'Lobby session expired.');} catch {}}
         for (const watcher of this.watchers.values()) {try {watcher.socket.close(4003, 'Live view expired.');} catch {}}
-        this.connections.clear(); this.watchers.clear(); this.tickets.clear(); this.inputs = []; this.ensureRoom();
+        this.connections.clear(); this.watchers.clear(); this.tickets.clear(); this.clearInput(); this.ensureRoom();
         this.room.members = []; this.room.chat = []; this.room.state = null; this.room.status = 'lobby'; this.room.winner = null; this.room.vote = null; this.room.modeSelected = false; this.room.results = null; this.room.rockets = null; this.room.rebalanceVote = null; this.room.lastActive = Date.now();
         await this.persist(); if (this.ctx.storage.deleteAlarm) await this.ctx.storage.deleteAlarm();
     }
