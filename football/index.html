@@ -7,30 +7,34 @@
         <meta name="robots" content="noindex, nofollow">
         <meta name="description" content="An unlisted football hub for you and your friends on Bonk Critic.">
         <title>Football | Bonk Critic</title>
-        <link rel="stylesheet" href="./football.css?v=20261126-football-5">
+        <link rel="stylesheet" href="../account.css">
+        <link rel="stylesheet" href="./football.css?v=20261127-football-6">
         <script src="../config.js"></script>
         <script src="../focus.js" defer></script>
-        <script type="module" src="./client.js?v=20261126-football-5"></script>
+        <script src="../skin-renderer.js" defer></script>
+        <script type="module" src="./client.js?v=20261127-football-6"></script>
     </head>
     <body>
         <div id="footballApp" class="football-app">
-            <header class="site-header">
+            <header class="site-header destination-navigation">
                 <a class="brand" href="../" aria-label="Back to Bonk Critic">
                     <span class="brand-ball" aria-hidden="true"></span>BONK CRITIC
                 </a>
-                <div class="header-context">
-                    <span class="page-label">FOOTBALL</span>
-                    <span id="connectionStatus" class="connection-status" role="status">Loading…</span>
-                </div>
+                <nav aria-label="Main navigation">
+                    <a href="../#/players">Players</a>
+                    <a href="../#/classes">Classes</a>
+                    <span data-football-account data-account-control><button type="button" class="account-open-login">Account</button></span>
+                </nav>
             </header>
 
             <main class="football-main">
                 <div class="page-heading">
                     <div>
-                        <p class="eyebrow">THE FOOTBALL HUB</p>
-                        <h1>One pitch. Everyone welcome.</h1>
+                        <p class="eyebrow">BONK CRITIC</p>
+                        <h1>Football</h1>
+                        <p class="page-description">Join the shared lobby, choose a mode and play.</p>
                     </div>
-                    <p class="heading-note">Choose your team, ready up, and join the next kickoff.</p>
+                    <span id="connectionStatus" class="connection-status" role="status">Loading…</span>
                 </div>
 
                 <div class="game-layout">
@@ -39,6 +43,7 @@
                             <div class="panel-heading">
                                 <p class="eyebrow">FROM THE SIDELINES</p>
                                 <h2 id="chatTitle">Room chat</h2>
+                                <label class="chat-filter-option"><input id="filterProfanity" type="checkbox" checked> Filter profanity</label>
                             </div>
                             <div id="chatLog" class="chat-log" role="log" aria-live="polite" aria-relevant="additions" aria-label="Room messages"></div>
                             <form id="chatForm" class="chat-form">
@@ -139,15 +144,15 @@
                             <div class="controls-grid">
                                 <div>
                                     <span class="control-label">MOVE</span>
-                                    <p><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or arrow keys</p>
+                                    <p id="moveKeyHelp"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or arrow keys</p>
                                 </div>
                                 <div>
                                     <span class="control-label">KICK</span>
-                                    <p><kbd>X</kbd>, <kbd>Space</kbd> or <kbd>Shift</kbd></p>
+                                    <p id="kickKeyHelp"><kbd>X</kbd>, <kbd>Space</kbd> or <kbd>Shift</kbd></p>
                                 </div>
                                 <div>
                                     <span class="control-label">BRAKE</span>
-                                    <p><kbd>Z</kbd> to slow down</p>
+                                    <p id="brakeKeyHelp"><kbd>Z</kbd> to slow down</p>
                                 </div>
                                 <div>
                                     <span class="control-label">CHAT / FOCUS</span>
@@ -155,6 +160,16 @@
                                 </div>
                             </div>
                             <p class="help-note">Click the pitch to focus the game. On a touch screen, use the controls below the pitch.</p>
+                        </details>
+
+                        <details id="footballControls" class="controls-help keybind-settings">
+                            <summary><span>Keyboard controls</span><span class="help-preview">Customise keys</span></summary>
+                            <div class="keybind-content">
+                                <p id="keybindStatus" role="status">Default controls.</p>
+                                <div id="keybindFields" class="keybind-fields"></div>
+                                <p class="keybind-help">Choose a slot and press a key. Backspace clears it; Escape cancels.</p>
+                                <div class="keybind-actions"><button id="resetKeybinds" type="button" class="button-secondary button-small">Reset</button><button id="saveKeybinds" type="button" class="button-primary button-small">Save controls</button></div>
+                            </div>
                         </details>
 
                         <details id="hostControls" class="panel admin-panel" hidden>
@@ -251,13 +266,6 @@
                             </section>
                         </section>
 
-                        <section class="panel activity-panel" aria-labelledby="activityTitle">
-                            <div class="panel-heading">
-                                <p class="eyebrow">AROUND THE PITCH</p>
-                                <h2 id="activityTitle">Match notices</h2>
-                            </div>
-                            <div id="activityLog" class="activity-log" role="log" aria-live="polite" aria-relevant="additions" aria-label="Match notices"></div>
-                        </section>
                     </aside>
                 </div>
             </main>

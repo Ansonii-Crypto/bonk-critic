@@ -54,6 +54,14 @@ Tests cover provider failures, forged browser identities, account-bound invitati
 
 ## Active avatar update
 
+Football also imports the movement, kick and brake keybinds returned in Bonk's
+successful login response. Migration `0017_account_controls.sql` stores only the
+validated controls and cursing-filter preference; passwords and provider tokens
+are still discarded. The football header has the same account/profile controls
+and an inline login form. Existing users can sign out and sign in once to import
+their saved Bonk controls. Changes made in football's keyboard editor remain
+local to that browser and account.
+
 Apply `worker/migrations/0011_account_avatars.sql` before deploying the updated Worker:
 
 ```powershell

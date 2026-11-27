@@ -289,6 +289,9 @@ export class FootballPhysics {
     }
 
     step(state, inputsBySlot = [], playerChanges = null) {
+        // Results keep their native momentum without accepting controls or
+        // advancing the match's score, countdowns, or kickoff lifecycle.
+        const coast = playerChanges?.coast === true;
         const settings = state.settings || DEFAULT_MATCH_SETTINGS;
         const world = this.world;
         world.novakReset();
@@ -309,22 +312,22 @@ export class FootballPhysics {
                 });
                 ready[slot] = disc.kickReady;
             });
-            if (state.ftu === -1) {
+            if (!coast && state.ftu === -1) {
                 bodies.forEach((body, slot) => {
                     const input = inputsBySlot[slot];
                     if (!input) return;
                     applyInputs(body, input, settings);
                     ready[slot] = kick(body, state.discs[slot], input, ball, this.sounds, settings);
                 });
-                world.Step(C.DT, C.VELOCITY_ITERATIONS, C.POSITION_ITERATIONS);
             }
+            if (coast || state.ftu === -1) world.Step(C.DT, C.VELOCITY_ITERATIONS, C.POSITION_ITERATIONS);
             world.ClearForces();
             bodies.forEach(body => clampPlayer(body, state.ppm, settings));
 
             const scores = state.scores.slice();
             let lastScorer = state.lscr;
             let goalScored = false;
-            if (state.ftu === -1 && state.fte === -1 && state.goalHeight !== -1) {
+            if (!coast && state.ftu === -1 && state.fte === -1 && state.goalHeight !== -1) {
                 const x = ball.GetPosition().x;
                 const leftGoal = (state.borderThickness + state.borderThicknessXInner) / state.ppm;
                 const rightGoal = (settings.pitchWidth - state.borderThickness - state.borderThicknessXInner) / state.ppm;
@@ -353,13 +356,13 @@ export class FootballPhysics {
                 ni: false,
                 players: state.players.map(player => player && !left.has(player.id) ? {...player} : null),
                 sts: state.sts.filter(sound => sound && sound.f > 0).map(sound => ({...sound, f: sound.f - 1})).concat(this.sounds),
-                fte: goalScored ? C.GOAL_TICKS : Math.max(-1, state.fte - 1),
-                ftu: Math.max(-1, state.ftu - 1),
+                fte: coast ? state.fte : goalScored ? C.GOAL_TICKS : Math.max(-1, state.fte - 1),
+                ftu: coast ? state.ftu : Math.max(-1, state.ftu - 1),
                 ball: outputBody(ball),
                 discs: bodies.map((body, slot) => ({...outputBody(body), team: state.discs[slot].team, kickReady: ready[slot]})),
             };
             if (state.settings) next.settings = {...settings};
-            if (state.fte === 0) {
+            if (!coast && state.fte === 0) {
                 const kickoff = createState(next.players, {seed: state.seed, settings});
                 kickoff.scores = scores;
                 return kickoff;

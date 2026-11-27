@@ -315,7 +315,7 @@ export class FootballRoom {
     finishGame(winner) {
         this.room.winner = winner; const board = this.publicRockets()?.leaderboard || [];
         this.room.results = {mode:this.room.mode, winner, winnerId:this.room.mode === 'rockets' ? board.find(row => row.scored)?.id || null : null, scores:this.room.state?.scores.slice() || [0, 0, 0, 0], leaderboard:board, unit:'m/s', deadline:Date.now() + RESULTS_TTL};
-        this.room.lastResult = {...this.room.results, finishedAt:Date.now()}; this.room.status = 'results'; this.inputs = []; this.clearReadiness(); this.room.rebalanceVote = null; this.stopTimer(); this.broadcastRoom(); this.background(this.persist()); this.background(this.scheduleAlarm());
+        this.room.lastResult = {...this.room.results, finishedAt:Date.now()}; this.room.status = 'results'; this.inputs = []; this.clearReadiness(); this.room.rebalanceVote = null; this.ensureTimer(); this.broadcastRoom(); this.background(this.persist()); this.background(this.scheduleAlarm());
     }
     systemChat(text) {
         const chat = {type:'chat', id:crypto.randomUUID(), memberId:null, name:'Football', text, time:Date.now(), system:true}; this.room.chat.push(chat); if (this.room.chat.length > 40) this.room.chat.shift(); this.broadcast(chat);
@@ -347,6 +347,7 @@ export class FootballRoom {
             else if (member.team) this.openRebalanceVote();
         } else if (this.room.status === 'results' && this.room.mode === 'rockets') this.removeRocketParticipant(memberId);
         if (!['playing', 'results'].includes(this.room.status)) this.promoteQueue(); this.updateVoteEligibility();
+        if (!this.canSimulate()) this.stopTimer();
     }
     abort(reason) {this.room.status = 'lobby'; this.room.state = null; this.room.winner = null; this.room.vote = null; this.room.results = null; this.room.rockets = null; this.room.rebalanceVote = null; this.inputs = []; this.stopTimer(); this.clearReadiness(); this.promoteQueue(); this.broadcast({type:'notice', text:reason});}
     async changed() {this.room.lastActive = Date.now(); this.broadcastRoom(); await this.persist(); await this.scheduleAlarm();}
@@ -362,23 +363,32 @@ export class FootballRoom {
         if (this.room.rebalanceVote?.deadline <= now) {this.resolveRebalanceVote(true); changed = true;}
         if (changed) {this.broadcastRoom(); this.background(this.persist());}
     }
+    canSimulate() {
+        return Boolean(this.room?.state && this.room.members.length && ['playing', 'results'].includes(this.room.status));
+    }
     ensureTimer() {
-        if (!this.timer && this.room?.status === 'playing') {this.lastPumpAt = Date.now(); this.accumulator = 0; this.timer = setInterval(() => this.pump(), STEP_MS);}
+        if (!this.timer && this.canSimulate()) {this.lastPumpAt = Date.now(); this.accumulator = 0; this.timer = setInterval(() => this.pump(), STEP_MS);}
     }
     stopTimer() {if (this.timer) clearInterval(this.timer); this.timer = null; this.lastPumpAt = 0; this.accumulator = 0;}
     pump(now = Date.now()) {
-        if (this.room?.status !== 'playing') {this.stopTimer(); return 0;}
+        if (!this.canSimulate()) {this.stopTimer(); return 0;}
         if (!this.lastPumpAt) {this.lastPumpAt = now; return 0;}
         // Timers can arrive late under load. Keep each physics step exactly
         // 1/30s while recovering ordinary delays; never replay a long dormancy.
         const elapsed = Math.max(0, Math.min(MAX_PUMP_DELTA, now - this.lastPumpAt)); this.lastPumpAt = now; this.accumulator += elapsed;
         let steps = 0;
-        while (this.room?.status === 'playing' && this.accumulator + 1e-7 >= STEP_MS && steps < MAX_CATCHUP_STEPS) {this.accumulator -= STEP_MS; this.tick(); steps++;}
+        while (this.canSimulate() && this.accumulator + 1e-7 >= STEP_MS && steps < MAX_CATCHUP_STEPS) {this.accumulator -= STEP_MS; this.tick(); steps++;}
         return steps;
     }
     tick() {
-        this.sweep(); if (!this.room || this.room.status !== 'playing') {this.stopTimer(); return;}
+        this.sweep(); if (!this.canSimulate()) {this.stopTimer(); return;}
         const state = this.room.state;
+        if (this.room.status === 'results') {
+            try {this.room.state = this.physics.step(state, [], {coast:true, playersLeft:[...this.playerLeaves]}); this.playerLeaves.clear();}
+            catch {this.stopTimer(); return;}
+            this.publishFrame();
+            return;
+        }
         if (this.room.mode === 'rockets' && this.room.rockets?.turnEnded && state.fte === 0) {
             this.completeRocketTurn(); this.broadcastRoom(); this.background(this.persist()); return;
         }
@@ -404,12 +414,15 @@ export class FootballRoom {
                 }
             } else if (!rockets.turnTicksLeft) {this.completeRocketTurn(); this.broadcastRoom(); this.background(this.persist()); return;}
         }
+        this.publishFrame(state.fte === 0);
+    }
+    publishFrame(roundEnded = false) {
         this.tickNumber++; if (this.connections.size) this.room.lastActive = Date.now();
         if (this.tickNumber % 2 === 0) {
             const frame = {type:'snapshot', tick:this.tickNumber, serverTime:Date.now(), status:this.room.status, mode:this.room.mode, winner:this.room.winner, rockets:this.publicRockets(), rebalanceVote:this.publicVote(this.room.rebalanceVote), state:this.room.state, inputs:Array.from({length:MAX_MEMBERS}, (_, slot) => this.inputs[slot] || 0)};
             for (const connection of this.connections.values()) {const member = this.room.members.find(item => item.id === connection.memberId); this.send(connection.socket, {...frame, ackSeq:this.sequences[member?.slot] ?? -1});}
         }
-        if (state.fte === 0) this.broadcastRoom(); if (Date.now() - this.lastSaved >= 2000) this.background(this.persist());
+        if (roundEnded) this.broadcastRoom(); if (Date.now() - this.lastSaved >= 2000) this.background(this.persist());
     }
     persist() {this.lastSaved = Date.now(); const saved = this.room ? JSON.parse(JSON.stringify({version:3, room:this.room, tick:this.tickNumber})) : null; this.persistChain = this.persistChain.catch(() => {}).then(() => saved ? this.ctx.storage.put('checkpoint', saved) : this.ctx.storage.delete('checkpoint')); return this.persistChain;}
     async scheduleAlarm() {

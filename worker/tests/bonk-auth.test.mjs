@@ -5,6 +5,8 @@ import test from 'node:test';
 
 const worker=(await import('../src/index.js')).default;
 const origin='https://bonk-critic.com';
+const nativeAccountControls=Buffer.from([0,6,0,38,0,87,0,40,0,83,0,37,0,65,0,39,0,68,0,88,0,16,0,90,0,89,0,0,1,3,231,3,231,3,231,3,231,0,32,3,231,0,3]).toString('base64');
+const expectedFootballControls={filterProfanity:false,bindings:{left:['ArrowLeft','KeyA'],right:['ArrowRight','KeyD'],up:['ArrowUp','KeyW'],down:['ArrowDown','KeyS'],action:['KeyX','ShiftLeft','Space'],action2:['KeyZ','KeyY']}};
 function environment(){
  const db=new DatabaseSync(':memory:');db.exec(readFileSync(new URL('../schema.sql',import.meta.url),'utf8'));
  const prepare=sql=>({bind(...args){const statement=db.prepare(sql);return {async first(){return statement.get(...args)||null},async all(){return {results:statement.all(...args)}},async run(){return {meta:{changes:Number(statement.run(...args).changes)}}}}},async all(){return {results:db.prepare(sql).all()}}});
@@ -43,6 +45,52 @@ async function unlock(env,user,id='primary-zimble'){
  const response=await request(env,'/api/login',{account_id:id,code:'123456'},{user});
  const body=await response.json();assert.equal(response.status,200,JSON.stringify(body));return body.session_token;
 }
+
+test('verified account controls are decoded from the provider, stored minimally, and returned on login and session refresh',async()=>withProvider(async set=>{
+ const env=environment();
+ try{
+  set({r:'success',id:100,username:'Verified',token:'bonk-secret',controls:nativeAccountControls});
+  const response=await request(env,'/api/bonk/login',{username:'typed-name',password:'test-only',controls:{admin:true},football_controls:{bindings:{left:['KeyQ']}}});
+  assert.equal(response.status,200);const data=await response.json();assert.deepEqual(data.user.football_controls,expectedFootballControls);
+  assert.equal(JSON.stringify(data).includes(nativeAccountControls),false);assert.equal(JSON.stringify(data).includes('bonk-secret'),false);
+  const stored=env.db.prepare('SELECT bonk_id,controls_json FROM bonk_account_controls').get();assert.equal(stored.bonk_id,'100');assert.deepEqual(JSON.parse(stored.controls_json),expectedFootballControls);
+  assert.doesNotMatch(stored.controls_json,/quality|stats|help|token|password|version|admin/);
+  const state=await(await request(env,'/api/session',null,{user:data.account_session_token})).json();assert.deepEqual(state.user.football_controls,expectedFootballControls);assert.equal(state.authenticated,false);assert.equal(state.code_verified,false);
+ }finally{env.db.close()}
+}));
+
+test('missing or malformed account controls never block verified login or grant account privileges',async()=>withProvider(async set=>{
+ const env=environment();
+ try{
+  for(const controls of [undefined,null,'', 'not base64', 'x'.repeat(16385), {bindings:expectedFootballControls.bindings,admin:true}, {bindings:{...expectedFootballControls.bindings,left:['KeyX']}}]){
+   set({r:'success',id:100,username:'Verified',token:'bonk-secret',controls});
+   const user=await signIn(env,{football_controls:expectedFootballControls,admin:true}),state=await(await request(env,'/api/session',null,{user})).json();
+   assert.equal(state.user.username,'Verified');assert.equal(state.user.football_controls,null);assert.equal(state.authenticated,false);assert.equal(env.db.prepare('SELECT controls_json FROM bonk_account_controls').get().controls_json,null);
+  }
+ }finally{env.db.close()}
+}));
+
+test('corrupt cached controls fall back safely while paired admin-session and logout checks stay intact',async()=>withProvider(async set=>{
+ const env=environment();
+ try{
+  set({r:'success',id:100,username:'Verified',token:'bonk-secret',controls:nativeAccountControls});await seedCode(env,'primary-zimble');
+  const user=await signIn(env),admin=await unlock(env,user);
+  for(const corrupted of ['{broken',JSON.stringify({bindings:expectedFootballControls.bindings,token:'never-public'}),'x'.repeat(16385)]){
+   env.db.prepare('UPDATE bonk_account_controls SET controls_json=?').run(corrupted);
+   const state=await(await request(env,'/api/session',null,{user,admin})).json();assert.equal(state.user.football_controls,null);assert.equal(state.authenticated,true);assert.equal(state.code_verified,true);assert.equal(JSON.stringify(state).includes('never-public'),false);
+  }
+  await request(env,'/api/bonk/logout',{}, {user,admin});const loggedOut=await(await request(env,'/api/session',null,{user,admin})).json();assert.equal(loggedOut.user,null);assert.equal(loggedOut.authenticated,false);assert.equal((await request(env,'/api/accounts',null,{user,admin})).status,403);
+ }finally{env.db.close()}
+}));
+
+test('account controls migration is idempotent and stores no account/session columns',()=>{
+ const db=new DatabaseSync(':memory:');
+ try{
+  db.exec('PRAGMA foreign_keys=ON;CREATE TABLE bonk_users(bonk_id TEXT PRIMARY KEY)');const migration=readFileSync(new URL('../migrations/0017_account_controls.sql',import.meta.url),'utf8');db.exec(migration);db.exec(migration);
+  assert.deepEqual(db.prepare('PRAGMA table_info(bonk_account_controls)').all().map(column=>column.name),['bonk_id','controls_json']);
+  assert.throws(()=>db.prepare('INSERT INTO bonk_account_controls VALUES(?,?)').run('missing','{}'),/FOREIGN KEY/);
+ }finally{db.close()}
+});
 
 test('server trusts only Bonk HTTPS response; rejects wrong passwords, missing IDs and forged browser roles',async()=>withProvider(async set=>{
  const env=environment();

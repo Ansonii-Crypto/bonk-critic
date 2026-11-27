@@ -48,6 +48,10 @@ supplied references: `Math.hypot(ball.xv, ball.yv)`, captured from the scoring
 physics tick. Velocity is already in metres per second. Rankings keep full
 precision and only round the displayed value.
 
+Rockets also displays live ball speed underneath the ball. Pitch vectors are
+cached at the canvas's displayed pixel resolution so enlarging the game does
+not enlarge a low-resolution image of the posts, lines and grass pattern.
+
 The end-of-game leaderboard ranks goals from fastest to slowest, with join
 order breaking exact ties. Players without a goal appear afterward. Leaving
 or disconnecting withdraws that player, skips their current turn, and removes
@@ -66,6 +70,32 @@ require the site's existing account sign-in and elevated administrator session;
 joining first does not grant permissions. Reloading the same tab resumes its seat
 using a room-specific credential, without placing account credentials in the
 invite link.
+
+The football header uses the same navigation and account menu as Players and
+Classes. Account opens an inline Bonk sign-in form; signed-in visitors have
+their skin, Profile, eligible Admin tools and Log out.
+
+## Controls and chat preferences
+
+Bonk's successful login response contains its serialized account controls.
+The Worker decodes supported versions 1–6 and saves only the validated movement,
+kick and brake keys plus the cursing-filter preference. Existing accounts need
+to sign out and sign in once to import these settings. A later login refreshes
+changes made on Bonk. Invalid or missing controls fall back to the normal keys
+without rejecting a valid login.
+
+Keyboard controls can also be customised on the football page. These overrides
+are saved for that account in the current browser and do not modify the Bonk
+account. Up to three keys per action are supported. Enter and Escape remain
+reserved for chat and menus.
+
+Filter profanity controls local chat display and can be toggled at any time,
+including for messages already received. Original chat text remains unchanged.
+The bundled 94-term list and character folding come from `Bonk.wab`,
+`Bonk.charReplacements` and `Bonk.sanitizeString` in the supplied
+`Version Storage/bonkannotated.js`. Like that source, matching includes
+substrings and replaces detected text with `bonk`. This is the supplied native
+list, rather than a claim that every later Bonk release uses identical data.
 
 ## Match settings
 
@@ -118,6 +148,10 @@ The Canvas renderer, generated sound cues, room protocol and frontend are Bonk
 Critic implementations. This page connects to Bonk Critic rooms, and does not
 join Bonk's public rooms or grant Bonk account XP.
 
+During the ten-second results screen, bodies continue damping and colliding
+naturally. Controls, kicks, scoring and kickoff resets are disabled during
+this coast, and the server continues sending snapshots until voting starts.
+
 ## Server and deployment
 
 `FootballRoom` is an authoritative Cloudflare Durable Object. It advances physics
@@ -137,12 +171,18 @@ shared match configuration. Mode votes, rebalance votes, turn clocks and results
 are checkpointed with the game. Chat,
 message sizes, input rates and roster sizes are bounded.
 
+Apply the account-controls table before deploying this version:
+
+```powershell
+npx wrangler d1 execute player-database --remote --config worker/wrangler.toml --file worker/migrations/0017_account_controls.sql
+```
+
 Deploy the existing Worker with its `FOOTBALL_ROOMS` binding and `football-v1`
 SQLite Durable Object migration, then publish the `football/` directory to Pages:
 
 ```powershell
-npx wrangler deploy --config worker/wrangler.toml
+npx wrangler deploy --config worker/wrangler.toml --durable-objects-code-update-mode immediate
 ```
 
-No player-database D1 migration is required. Match checkpoints live in the room's
+Immediate game-code updates reconnect active clients. Match checkpoints live in the room's
 Durable Object storage, separate from assessments, comments and account sessions.

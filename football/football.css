@@ -3,6 +3,7 @@
     --paper: #fff9e9;
     --paper-deep: #e8dfc9;
     --ink: #42433f;
+    --line: #42433f;
     --text: #303630;
     --muted: #687064;
     --green: #65954b;
@@ -189,37 +190,39 @@ button > span[aria-hidden] {
 }
 
 .site-header {
-    min-height: 65px;
-    padding: 15px max(24px, calc((100% - 1712px) / 2));
+    min-height: 76px;
+    padding: 14px max(18px, calc((100% - 1120px) / 2));
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 20px;
     border-bottom: 3px solid var(--ink);
-    background: var(--paper);
-    box-shadow: 0 4px 0 #42433f12;
+    background: #faf2dc;
+    box-shadow: 0 5px 0 #42433f20;
+    position: relative;
+    z-index: 30;
 }
 
 .brand {
     display: inline-flex;
     align-items: center;
-    gap: 9px;
+    gap: 10px;
     color: var(--ink);
-    font-size: 19px;
+    font-size: 20px;
     font-weight: 900;
-    letter-spacing: -.055em;
+    letter-spacing: -.04em;
     white-space: nowrap;
 }
 
 .brand-ball {
     display: inline-block;
-    width: 26px;
-    height: 26px;
+    width: 29px;
+    height: 29px;
     flex: 0 0 auto;
     border: 3px solid var(--ink);
     border-radius: 50%;
     background: #e8b75b;
-    box-shadow: inset -4px -3px 0 #00000015;
+    box-shadow: inset -4px -4px 0 #00000015;
 }
 
 .header-context {
@@ -1772,5 +1775,186 @@ kbd {
     *, *::before, *::after {
         transition: none !important;
         scroll-behavior: auto !important;
+    }
+}
+
+.site-header nav {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 14px;
+    font-weight: bold;
+}
+
+.site-header nav > a, .site-header .account-open-login, .site-header .user-account-menu > summary {
+    min-height: 0;
+    padding: 9px 13px;
+    border: 2px solid var(--ink);
+    border-radius: 5px;
+    background: var(--paper-deep);
+    color: var(--text);
+    box-shadow: 0 3px 0 var(--ink);
+    font: inherit;
+    line-height: 1.2;
+}
+
+.page-heading h1 {
+    margin: 10px 0 12px;
+    font-size: clamp(36px, 6vw, 58px);
+    line-height: 1.05;
+    letter-spacing: -.045em;
+    text-shadow: 0 2px 0 #ffffff70;
+}
+
+.page-heading .eyebrow {
+    font-size: 12px;
+    color: #486b39;
+    letter-spacing: .13em;
+}
+
+.page-description {
+    color: #414d43;
+    font-size: 15px;
+    line-height: 1.6;
+}
+
+.page-heading .connection-status {
+    margin-bottom: 6px;
+}
+
+.chat-filter-option {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-top: 12px;
+    color: var(--muted);
+    font-size: 11px;
+    cursor: pointer;
+}
+
+.chat-filter-option input {
+    width: 15px;
+    height: 15px;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+    accent-color: var(--green);
+}
+
+.keybind-content {
+    padding: 0 14px 15px;
+}
+
+#keybindStatus, .keybind-help {
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 1.6;
+}
+
+.keybind-fields {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px 20px;
+    margin-block: 14px;
+}
+
+.keybind-row {
+    display: grid;
+    grid-template-columns: 60px repeat(3, minmax(0, 1fr));
+    gap: 6px;
+    align-items: center;
+    font-size: 11px;
+}
+
+.keybind-row button {
+    min-width: 0;
+    min-height: 32px;
+    padding: 5px;
+    font-size: 10px;
+    overflow-wrap: anywhere;
+}
+
+.keybind-row button[aria-pressed="true"] {
+    background: #c9dda9;
+    color: var(--text);
+}
+
+.keybind-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 13px;
+}
+
+.football-account-dialog {
+    width: min(430px, calc(100% - 28px));
+    max-height: calc(100dvh - 40px);
+    overflow-y: auto;
+    padding: 24px;
+    border: 3px solid var(--ink);
+    border-radius: 8px;
+    background: var(--paper);
+    color: var(--text);
+    box-shadow: 0 6px 0 var(--ink);
+}
+
+.football-account-dialog::backdrop {
+    background: #202c32a0;
+}
+
+.football-account-dialog h2 {
+    margin: 0 0 10px;
+    font-size: 25px;
+}
+
+.football-account-dialog p {
+    margin: 10px 0;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.6;
+}
+
+.football-account-dialog .field {
+    margin-top: 14px;
+}
+
+.football-account-dialog input {
+    font-size: 16px;
+}
+
+.football-account-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 18px;
+}
+
+.football-account-dialog [role="status"] {
+    color: #a4473c;
+}
+
+@media (max-width: 800px) {
+    .keybind-fields {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 540px) {
+    .site-header {
+        padding: 12px 16px;
+        flex-wrap: wrap;
+        gap: 12px;
+    }
+    .site-header .brand {
+        font-size: 17px;
+    }
+    .site-header nav > a, .site-header .account-open-login, .site-header .user-account-menu > summary {
+        padding: 7px 10px;
+    }
+    .page-heading {
+        align-items: flex-start;
+    }
+    .page-heading .connection-status {
+        margin-top: 10px;
     }
 }

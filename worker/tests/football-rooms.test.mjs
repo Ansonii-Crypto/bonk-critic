@@ -479,3 +479,124 @@ test('Rockets advances 900 active ticks in thirty seconds despite delayed callba
         room.pump(start + 30_000); assert.equal(room.room.rockets.attackerId, members[1].member.id); assert.equal(room.room.rockets.turnTicksLeft, 900); assert.equal(room.room.state.ftu, 120);
     } finally {cleanup(env);}
 });
+
+test('results coast through the fixed-step pump and publish motion to players and spectators until voting', async () => {
+    const env = environment();
+    try {
+        const {room, members} = await match(env, 2), watcher = await member(env, 'Watcher');
+        await command(room, watcher, {type:'spectate'});
+        const slot = roster(room, members[0]).slot;
+        room.room.state.ftu = -1; room.room.state.fte = 0; room.room.state.scores[2] = 3;
+        Object.assign(room.room.state.discs[slot], {x:20, y:22, xv:4, yv:0});
+        Object.assign(room.room.state.ball, {x:22.1, y:22, xv:8, yv:0});
+        room.finishGame(2);
+        assert.ok(room.timer, 'finishing keeps the simulation timer running');
+        room.stopTimer();
+        const result = structuredClone(room.room.results), lastResult = structuredClone(room.room.lastResult);
+        await command(room, members[0], {type:'input', seq:1, flags:18});
+        assert.equal(room.inputs[slot], 0, 'results accept no movement or kick input');
+        const start = Date.now(); room.lastPumpAt = start; room.accumulator = 0;
+        assert.equal(room.pump(start + 100), 3);
+        assert.ok(Math.abs(room.room.state.ball.xv - 8 * 0.98 ** 3) < 1e-9);
+        assert.ok(Math.abs(room.room.state.discs[slot].xv - 4 * 0.92 ** 3) < 1e-9);
+        assert.ok(room.room.state.ball.x > 22.1);
+        assert.equal(room.room.state.fte, 0);
+        assert.equal(room.room.state.ftu, -1);
+        assert.equal(room.room.status, 'results');
+        assert.deepEqual(room.room.results, result);
+        assert.deepEqual(room.room.lastResult, lastResult);
+        for (const data of [...members, watcher]) {
+            const frames = data.socket.received.filter(message => message.type === 'snapshot');
+            assert.equal(frames.length, 1);
+            assert.equal(frames[0].status, 'results');
+            assert.ok(frames[0].state.ball.x > 22.1);
+            assert.equal(frames[0].inputs.some(Boolean), false);
+        }
+        const frameCount = watcher.socket.received.filter(message => message.type === 'snapshot').length;
+        room.room.results.deadline = Date.now() - 1;
+        room.pump(start + 200);
+        assert.equal(room.room.status, 'voting');
+        assert.equal(room.room.state, null);
+        assert.equal(room.timer, null);
+        assert.equal(watcher.socket.received.filter(message => message.type === 'snapshot').length, frameCount, 'no stale results frame is sent after the deadline');
+        room.tick();
+        assert.equal(room.room.status, 'voting');
+        assert.equal(room.room.state, null);
+    } finally {cleanup(env);}
+});
+
+test('Rockets results motion cannot score again, alter the turn clock, or change the final leaderboard', async () => {
+    const env = environment();
+    try {
+        const {room, members} = await rocketsMatch(env, 1), attackerId = members[0].member.id;
+        room.room.state.ftu = -1; room.room.state.fte = -1; room.room.state.scores[3] = 1;
+        Object.assign(room.room.state.ball, {x:3, xv:-20, yv:0});
+        room.room.rockets.records[attackerId] = {scored:true, speed:44.123, timeTicks:8};
+        room.room.rockets.turnTicksLeft = 500; room.room.rockets.turnEnded = true;
+        room.finishGame(null); room.stopTimer();
+        const rockets = structuredClone(room.room.rockets), results = structuredClone(room.room.results);
+        const lastResult = structuredClone(room.room.lastResult), chatCount = room.room.chat.length;
+        for (let frame = 0; frame < 30; frame++) room.tick();
+        assert.ok(room.room.state.ball.x < 30 / 11, 'coasting crosses the open goal plane');
+        assert.deepEqual(room.room.state.scores, [0, 0, 0, 1]);
+        assert.equal(room.room.state.fte, -1);
+        assert.equal(room.room.status, 'results');
+        assert.deepEqual(room.room.rockets, rockets);
+        assert.deepEqual(room.room.results, results);
+        assert.deepEqual(room.room.lastResult, lastResult);
+        assert.equal(room.room.chat.length, chatCount);
+        assert.equal(room.room.state.sts.some(sound => sound.i === 'footGoal' || sound.i === 'footKick'), false);
+    } finally {cleanup(env);}
+});
+
+test('a restored results checkpoint resumes coasting and stops at its original deadline', async () => {
+    const env = environment();
+    let restored;
+    try {
+        const {room} = await match(env, 1);
+        room.room.state.ftu = -1; room.room.state.fte = 0; room.room.state.scores[3] = 3;
+        Object.assign(room.room.state.ball, {x:30, y:22, xv:12, yv:0});
+        room.finishGame(3); room.stopTimer();
+        const deadline = room.room.results.deadline, result = structuredClone(room.room.lastResult);
+        await room.persist();
+        restored = new FootballRoom(context(room.ctx.storage), env);
+        await restored.ready;
+        assert.equal(restored.room.status, 'results');
+        assert.ok(restored.timer, 'results with resumable seats resume the fixed-step pump');
+        restored.stopTimer();
+        restored.tick();
+        assert.ok(Math.abs(restored.room.state.ball.xv - 12 * 0.98) < 1e-9);
+        assert.ok(restored.room.state.ball.x > 30);
+        assert.equal(restored.room.state.fte, 0);
+        assert.equal(restored.room.results.deadline, deadline);
+        assert.deepEqual(restored.room.lastResult, result);
+        restored.room.results.deadline = Date.now() - 1;
+        restored.tick();
+        assert.equal(restored.room.status, 'lobby', 'no connected voters means the results clear into an idle lobby');
+        assert.equal(restored.room.state, null);
+        assert.equal(restored.room.results, null);
+        assert.equal(restored.timer, null);
+        restored.tick();
+        assert.equal(restored.room.status, 'lobby');
+    } finally {restored?.stopTimer(); cleanup(env);}
+});
+
+test('an empty results room stops its simulation immediately while keeping the scheduled phase deadline', async () => {
+    const env = environment();
+    try {
+        const {room, members} = await match(env, 1);
+        room.finishGame(3);
+        assert.ok(room.timer);
+        const deadline = room.room.results.deadline;
+        await command(room, members[0], {type:'leave'});
+        assert.equal(room.room.members.length, 0);
+        assert.equal(room.timer, null);
+        assert.equal(room.room.results.deadline, deadline);
+        assert.equal(room.pump(Date.now() + 100), 0);
+        room.room.results.deadline = Date.now() - 1;
+        await room.alarm();
+        assert.equal(room.room.status, 'lobby');
+        assert.equal(room.room.results, null);
+        assert.equal(room.room.state, null);
+    } finally {cleanup(env);}
+});

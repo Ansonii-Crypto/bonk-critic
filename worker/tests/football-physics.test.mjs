@@ -389,3 +389,68 @@ test('geometry previews accept settings-only states and zero-strength kicks stay
     approximately(next.ball.xv, 0);
     approximately(next.discs[0].xv, 0);
 });
+
+test('coasting keeps native momentum and damping while ignoring controls and preserving round state', () => {
+    const physics = new FootballPhysics();
+    let state = createState([players[0]], {settings: {moveForce: 64, kickImpulse: 30}, kickoffTicks: 120});
+    state.fte = 0;
+    state.scores = [0, 0, 3, 2];
+    state.lscr = 2;
+    Object.assign(state.discs[0], {x: 20, y: 22, xv: 4, yv: 0});
+    Object.assign(state.ball, {x: 22.1, y: 22, xv: 8, yv: 0});
+    const settings = structuredClone(state.settings);
+    for (let tick = 1; tick <= 30; tick++) {
+        state = physics.step(state, [{right: true, down: true, action: true}], {coast: true});
+        approximately(state.discs[0].xv, 4 * 0.92 ** tick);
+        approximately(state.discs[0].yv, 0);
+        approximately(state.ball.xv, 8 * 0.98 ** tick);
+        assert.deepEqual(state.scores, [0, 0, 3, 2]);
+        assert.equal(state.ftu, 120);
+        assert.equal(state.fte, 0);
+        assert.equal(state.lscr, 2);
+        assert.equal(state.discs[0].kickReady, true);
+        assert.equal(state.sts.some(sound => sound.i === 'footKick'), false);
+        assert.deepEqual(state.settings, settings);
+    }
+    assert.ok(state.ball.x > 22.1 && state.discs[0].x > 20, 'the bodies move rather than freezing or respawning');
+});
+
+test('coasting resolves native wall, post, and moving-player contacts', () => {
+    const physics = new FootballPhysics();
+    const wallAndPost = active([players[0]]);
+    const geometry = getPitchGeometry(wallAndPost).world;
+    Object.assign(wallAndPost.ball, {x: 40, y: geometry.top + C.BALL_RADIUS + 0.06, xv: 0, yv: -15});
+    Object.assign(wallAndPost.discs[0], {x: geometry.posts[0].x + 2, y: geometry.posts[0].y, xv: -12, yv: 0});
+    const movingContact = active([players[0]]);
+    Object.assign(movingContact.discs[0], {x: 22.15, y: 22, xv: 0, yv: 0});
+    Object.assign(movingContact.ball, {x: 20, y: 22, xv: 25, yv: 0});
+    for (const state of [wallAndPost, movingContact]) {
+        const normal = physics.step(state, [{}]);
+        const coast = physics.step(state, [{right: true, action: true}], {coast: true});
+        assert.deepEqual(coast.ball, normal.ball);
+        assert.deepEqual(coast.discs, normal.discs);
+    }
+    const reflected = physics.step(wallAndPost, [], {coast: true});
+    assert.ok(reflected.ball.yv > 0);
+    assert.ok(reflected.discs[0].xv > 0);
+    const transferred = physics.step(movingContact, [], {coast: true});
+    assert.ok(transferred.discs[0].xv > 0);
+    assert.ok(transferred.ball.xv > 0 && transferred.ball.xv < 5);
+});
+
+test('coasting never scores through an open goal and still removes departed players', () => {
+    const physics = new FootballPhysics();
+    const state = active(players);
+    state.discs[1].kickReady = false;
+    Object.assign(state.ball, {x: 3, xv: -20, yv: 0});
+    const coast = physics.step(state, [{action: true}, {}], {coast: true, playersLeft: [0]});
+    assert.ok(coast.ball.x < 30 / C.PPM, 'the ball has crossed the native goal plane');
+    assert.deepEqual(coast.scores, state.scores);
+    assert.equal(coast.lscr, -1);
+    assert.equal(coast.fte, -1);
+    assert.equal(coast.ftu, -1);
+    assert.equal(coast.sts.some(sound => sound.i === 'footGoal'), false);
+    assert.equal(coast.players[0], null);
+    assert.equal(coast.discs[0], undefined);
+    assert.equal(coast.discs[1].kickReady, false, 'coasting does not rearm a released action');
+});
