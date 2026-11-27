@@ -21,16 +21,24 @@ side. A single player can start a practice game. New arrivals remain in
 Spectators until the next game, including across goals and rebalances. Lobby assignments keep team sizes
 within one player while moving as few existing players as possible. Players
 can opt out and spectate. Each team has a Join button underneath its players;
-Spectate opts out of the next game. The Teams overlay includes a Blue or Red preference,
-with Random centred below. Preferences are honoured when compatible with even
-teams; they do not override the balancing rules.
+Spectate opts out of the next game. Blue, Red and Spectators share a compact
+three-column row at the top of the pitch. There are no separate lobby side
+preference buttons. Joining a team saves that preference while keeping the
+teams balanced.
+
+The lobby is playable. Connected team members can move around the entire canvas,
+kick the ball and collide with posts and other players while waiting. This uses
+the same authoritative physics as the match, with no goals, round countdowns
+or results. A ball kicked through an opening bounces at the outside of the
+canvas, keeping it reachable. Spectators watch without controlling a disc.
 
 Between games, each team player has a Ready button and a visible ready status.
 When every participating player is ready, the server starts a new game
 automatically, including solo practice. Spectators do not block the ready
 check. Rockets includes its queued participants in this check. Readiness resets
-when the lobby roster or match settings change. Site administrators can also
-start or end a game.
+when the lobby roster or match settings change. Ready and the administrator's
+Start button sit together below the team lists. Site administrators can also
+end a game.
 
 If a Balanced teams player leaves, a fifteen-second Yes/No vote asks the
 remaining participants whether to rebalance. A majority voting Yes starts a
@@ -128,7 +136,8 @@ list, rather than a claim that every later Bonk release uses identical data.
 
 ## Match settings
 
-An administrator with access enabled can change these values between games:
+An administrator with access enabled can edit these values. Each field has a
+Default button that restores its input without applying it automatically:
 
 | Setting | Native default | Meaning |
 | --- | ---: | --- |
@@ -144,7 +153,11 @@ An administrator with access enabled can change these values between games:
 The server validates every setting, including whether the goal opening fits in
 the pitch. The same configuration drives server physics, local prediction and
 the rendered field. Closed goals provide a practice game; an administrator can
-return it to the lobby. Settings cannot change during an active game.
+return it to the lobby. Apply updates lobby practice immediately. During a
+match, Apply queues the settings for the next kickoff or Rockets turn; the
+current round keeps its existing geometry and physics. Changes queued during
+voting or results apply to the next game. Queued settings are included in the
+room checkpoint and are still checked against the administrator's server session.
 
 ## Mechanics and provenance
 

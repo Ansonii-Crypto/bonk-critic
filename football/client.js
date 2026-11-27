@@ -1,4 +1,4 @@
-import {FootballPhysics, FOOTBALL_CONSTANTS as C, getPitchGeometry} from './physics.js?v=20261127-football-6';
+import {FootballPhysics, FOOTBALL_CONSTANTS as C, getPitchGeometry} from './physics.js?v=20261127-football-9';
 import {DEFAULT_MATCH_SETTINGS, SETTING_RULES, validateMatchSettings} from './settings.js';
 import {FOOTBALL_MODES, ballSpeed} from './modes.js?v=20261126-football-5';
 import {maskProfanity} from './chat-filter.js?v=20261127-football-6';
@@ -37,12 +37,14 @@ const viewport = {width: 730, height: 500, scale: 1, x: 0, y: 0, ratio: 1};
 const teamName = team => team === 3 ? 'Blue' : team === 2 ? 'Red' : 'Spectators';
 const self = () => room?.members.find(member => member.id === memberId);
 const isOpen = () => ready && socket?.readyState === WebSocket.OPEN;
+const movementPhase = () => room?.status === 'playing' || room?.status === 'lobby';
+const predictionOptions = () => room?.status === 'lobby' ? {practice: true} : null;
 const editable = target => target?.closest?.('input,textarea,select,button,summary,[contenteditable="true"]');
 const clone = value => JSON.parse(JSON.stringify(value));
 const settingsFingerprint = settings => JSON.stringify(Object.keys(SETTING_RULES).map(key => settings[key] ?? DEFAULT_MATCH_SETTINGS[key]));
 const countdown = deadline => Math.max(0, Math.ceil((Number(deadline || 0) - Date.now() - serverClockOffset) / 1000));
 const modeName = () => room?.mode === 'rockets' ? FOOTBALL_MODES.rockets.label : 'Balanced teams';
-const predictionStops = state => state.fte === 0 && (room?.mode === 'rockets' || state.scores.some(score => score >= room.settings.scoreLimit));
+const predictionStops = state => room?.status === 'playing' && state.fte === 0 && (room.mode === 'rockets' || state.scores.some(score => score >= room.settings.scoreLimit));
 
 function copyBindings(value) {
     return Object.fromEntries(BINDING_ACTIONS.map(action => [action, [...(value[action] || [])]]));
@@ -111,14 +113,6 @@ function loadAccountPreferences(user) {
     $('filterProfanity').checked = filter; renderChat();
     try {selectedPreference = Number(localStorage.getItem('football-preferred-team:' + (user?.id || 'viewer')) || 0);} catch {selectedPreference = 0;}
     if (![0, 2, 3].includes(selectedPreference)) selectedPreference = 0;
-}
-
-function setTeamPreference(team) {
-    selectedPreference = team;
-    try {localStorage.setItem('football-preferred-team:' + (account?.id || 'viewer'), String(team));} catch {}
-    if (memberId) send({type: 'preference', team});
-    renderGamePanels();
-    if (room?.status === 'playing' && self()?.team) canvas.focus({preventScroll: true});
 }
 
 function setGameUiHidden(hidden) {
@@ -193,7 +187,7 @@ function send(message) {
 
 function sendInput() {
     if (!isOpen()) return;
-    send({type: 'input', seq: ++sequence, flags: room?.status === 'playing' && self()?.team ? flags : 0});
+    send({type: 'input', seq: ++sequence, flags: movementPhase() && self()?.team ? flags : 0});
 }
 
 function updateInput() {
@@ -256,12 +250,12 @@ function acceptState(state, serverTick = 0, inputs = []) {
     if (snapshots.length > 12) snapshots.shift();
     lastInputs = Array.isArray(inputs) ? inputs : [];
     lastSnapshotAt = now; lastPredictionAt = now; predictionSteps = 0;
-    predicted = self()?.team && room?.status === 'playing' ? clone(state) : null;
+    predicted = self()?.team && movementPhase() ? clone(state) : null;
     if (predicted) {
         const ahead = Math.min(3, Math.floor(latency / 2 / (1000 / C.TICK_RATE)));
         for (let index = 0; index < ahead; index++) {
             if (predictionStops(predicted)) break;
-            predicted = physics.step(predicted, predictionInput()); predictionSteps++;
+            predicted = physics.step(predicted, predictionInput(), predictionOptions()); predictionSteps++;
         }
     }
     setText($('scoreBlue'), state.scores[3]); setText($('scoreRed'), state.scores[2]);
@@ -376,16 +370,11 @@ function renderGamePanels() {
     const results = joined && room?.status === 'results' && !!room.results;
     const playing = room?.status === 'playing';
     const me = self(), eligible = !!(me?.connected && (me.team || me.queued));
-    const preference = $('teamPreferencePanel'), livePreference = joined && playing && room.mode === 'rockets' && !!me?.team;
-    preference.classList.toggle('is-live-preference', livePreference);
-    preference.hidden = !joined;
-    if (livePreference && preference.parentElement !== $('pitchWrap')) $('pitchWrap').append(preference);
-    else if (!livePreference && preference.parentElement !== $('roomPanel')) $('roomPanel').insertBefore(preference, $('lobbyPanel'));
     $('roomEntry').hidden = joined;
     $('roomPanel').hidden = !joined;
     $('teamsOverlay').hidden = !joined || playing && !!me?.team;
     $('pitchWrap').classList.toggle('showing-teams', !$('teamsOverlay').hidden);
-    $('touchControls').hidden = !joined || !playing || !me?.team;
+    $('touchControls').hidden = !joined || !movementPhase() || !me?.team;
     $('footballChat').hidden = !joined;
     $('leaveRoom').hidden = !joined;
     $('pitchWrap').classList.toggle('is-in-room', joined);
@@ -393,15 +382,16 @@ function renderGamePanels() {
     setText($('entryDescription'), account ? 'Join the lobby, or watch the current match until the next game.' : 'Sign in to take your place on the shared pitch.');
     setText($('joinGameButton'), account ? 'Join game' : 'Sign in to join');
     $('joinGameButton').disabled = busy;
-    for (const [id, team] of [['preferBlue', 3], ['preferRed', 2], ['preferRandom', 0]]) $(id).setAttribute('aria-pressed', String(selectedPreference === team));
-    const preferenceHint = $('teamPreferencePanel').querySelector('.section-description');
-    const pendingRocketSide = room?.mode === 'rockets' && room.rockets?.attackerId === memberId && room.rockets.sideChangeUsed && selectedPreference && selectedPreference !== room.rockets.attackerTeam;
-    setText(preferenceHint, pendingRocketSide ? 'Your next turn will use this preference. One side change is allowed per turn.' : room?.mode === 'rockets' ? 'Choose your shooting side. You can change sides once during your turn.' : 'Teams stay balanced; your preference applies when possible.');
     $('gameOverlay').hidden = !voting && !results;
     $('modeVotePanel').hidden = !voting;
     $('resultsPanel').hidden = !results;
     $('rebalanceNotice').hidden = !joined || !playing || !room?.rebalanceVote;
     $('rocketsHud').hidden = !playing || room?.mode !== 'rockets' || !room.rockets;
+    $('rocketSideControls').hidden = !joined || !playing || room?.mode !== 'rockets' || room.rockets?.attackerId !== memberId;
+    for (const [id, team] of [['rocketSideBlue', 3], ['rocketSideRed', 2]]) {
+        $(id).setAttribute('aria-pressed', String(room?.rockets?.attackerTeam === team));
+        $(id).disabled = !isOpen() || !!room?.rockets?.sideChangeUsed;
+    }
     $('votingWaiting').hidden = !voting;
     if (voting) {
         const vote = room.vote, selected = vote.votes?.[memberId];
@@ -414,7 +404,7 @@ function renderGamePanels() {
             button.disabled = !isOpen() || !eligible || countdown(vote.deadline) === 0;
             button.setAttribute('aria-pressed', String(selected === button.dataset.modeVote));
         }
-        setText($('votingWaiting'), !eligible ? 'Join a team or the queue to vote. Spectators can watch.'
+        setText($('votingWaiting'), !eligible ? 'Join a team to vote. Spectators can watch.'
             : selected ? 'Your vote: ' + (selected === 'rockets' ? 'Rockets' : 'Balanced teams') + '. You can change it until voting ends.'
             : 'One vote per player. Voting closes when everyone has voted or time runs out.');
     } else if (results) {
@@ -465,30 +455,46 @@ function buildSettingsFields() {
         title.textContent = rule.label; input.id = 'setting-' + key; input.name = key; input.type = 'number';
         input.min = rule.disabledValue ?? rule.min; input.max = rule.max; input.step = rule.step;
         input.value = DEFAULT_MATCH_SETTINGS[key]; input.required = true; input.setAttribute('aria-labelledby', title.id);
-        field.append(title, input);
+        const row = document.createElement('div'), reset = document.createElement('button');
+        row.className = 'setting-input-row';
+        reset.type = 'button'; reset.className = 'setting-reset button-secondary button-small'; reset.dataset.resetSetting = key;
+        reset.textContent = 'Default'; reset.setAttribute('aria-label', 'Reset ' + rule.label.toLowerCase() + ' to default (' + DEFAULT_MATCH_SETTINGS[key] + ')');
+        reset.addEventListener('click', () => {
+            input.value = DEFAULT_MATCH_SETTINGS[key];
+            settingsDirty = settingsFingerprint(readSettingsFields()) !== settingsFingerprint(room?.pendingSettings || room?.settings || DEFAULT_MATCH_SETTINGS);
+            if (room) updateSettings();
+        });
+        row.append(input, reset); field.append(title, row);
         const hint = document.createElement('small'); hint.className = 'setting-hint';
-        hint.textContent = key === 'goalHeight' ? '13 by default. Use -1 to close both goals.' : rule.unit || '';
+        hint.textContent = 'Default: ' + DEFAULT_MATCH_SETTINGS[key] + (rule.unit ? ' ' + rule.unit : '') + (key === 'goalHeight' ? '. Use -1 to close both goals.' : '');
         field.append(hint); container.append(field);
     }
 }
 
+function readSettingsFields() {
+    return Object.fromEntries(Object.keys(SETTING_RULES).map(key => [key, Number($('setting-' + key).value)]));
+}
+
 function updateSettings() {
-    const signature = settingsFingerprint(room.settings);
-    if (signature !== settingsSignature) {
+    const target = room.pendingSettings || room.settings, signature = settingsFingerprint(target);
+    if (signature !== settingsSignature && !settingsDirty) {
         // An unchanged roster/chat update must not overwrite a form being edited.
-        for (const key of Object.keys(SETTING_RULES)) $('setting-' + key).value = room.settings[key] ?? DEFAULT_MATCH_SETTINGS[key];
+        for (const key of Object.keys(SETTING_RULES)) $('setting-' + key).value = target[key] ?? DEFAULT_MATCH_SETTINGS[key];
         settingsDirty = false; settingsSignature = signature;
     }
-    const disabled = room.status !== 'lobby' || !isOpen() || !self()?.admin || pendingSettingsSignature !== null;
+    const disabled = !isOpen() || !self()?.admin || pendingSettingsSignature !== null;
     $('matchSettingsForm').querySelectorAll('input,button').forEach(input => input.disabled = disabled);
     $('saveSettings').disabled = disabled || !settingsDirty;
-    if ($('settingsStatus')) setText($('settingsStatus'), room.status !== 'lobby' ? 'Match settings are available in the lobby after voting.' : settingsDirty ? 'Unsaved changes' : 'Settings apply to the next game.');
+    setText($('saveSettings'), room.status === 'playing' ? 'Apply next round' : room.status === 'lobby' ? 'Apply settings' : 'Apply next game');
+    if ($('settingsStatus')) setText($('settingsStatus'), settingsDirty ? 'Unsaved changes. Apply when ready.'
+        : room.pendingSettings ? 'Changes are queued for the next kickoff or Rockets turn.'
+        : room.status === 'lobby' ? 'Applies to lobby practice and the next game.' : 'Applied changes take effect at the next kickoff or Rockets turn.');
 }
 
 function applyRoom(next) {
     if (!next) return;
     const oldStatus = room?.status, oldAttacker = room?.rockets?.attackerId; room = next;
-    if (settingsFingerprint(room.settings) === pendingSettingsSignature) {settingsDirty = false; pendingSettingsSignature = null;}
+    if (settingsFingerprint(room.pendingSettings || room.settings) === pendingSettingsSignature) {settingsDirty = false; pendingSettingsSignature = null;}
     if (oldStatus !== room.status || oldAttacker !== room.rockets?.attackerId) {releaseInput(); snapshots = []; smoothing.clear(); predicted = null;}
     setText($('roomTitle'), room.name); setText($('roomCodeDisplay'), room.id);
     history.replaceState(null, '', location.pathname);
@@ -545,7 +551,7 @@ function updateMatchStatus() {
         if (!ready) text = reconnecting ? 'Connection interrupted. Reconnecting…' : 'Connecting to room…';
         else if (room.status === 'voting') text = 'Vote for the next game on the pitch. ' + countdown(room.vote?.deadline) + 's remaining.';
         else if (room.status === 'results') text = modeName() + ' complete. Results are on the pitch.';
-        else if (room.status === 'lobby') text = role + '. Ready up when you want to play.';
+        else if (room.status === 'lobby') text = role + '. Move around while you wait, then ready up.';
         else if (room.status === 'finished') text = teamName(room.winner) + ' wins. Ready up for the next game.';
         else if (lastState?.ftu >= 0) text = 'Kickoff in ' + Math.ceil(lastState.ftu / 30) + '. ' + role + '.';
         else if (lastState?.fte >= 0) text = teamName(lastState.lscr) + ' scores!';
@@ -679,15 +685,17 @@ async function joinFromEntry() {
 }
 $('joinRoomForm').addEventListener('submit', event => {event.preventDefault(); void joinFromEntry();});
 $('leaveRoom').addEventListener('click', () => {send({type: 'leave'}); storeSeat(room?.id, null); returnToEntry(); history.replaceState(null, '', location.pathname);});
-$('spectate').addEventListener('click', () => send({type: 'spectate'}));
-for (const [id, team] of [['preferBlue', 3], ['preferRed', 2], ['preferRandom', 0]]) $(id).addEventListener('click', () => setTeamPreference(team));
+$('spectate').addEventListener('click', () => {send({type: 'spectate'}); canvas.focus({preventScroll: true});});
+for (const [id, team] of [['rocketSideBlue', 3], ['rocketSideRed', 2]]) $(id).addEventListener('click', () => {
+    send({type: 'preference', team}); canvas.focus({preventScroll: true});
+});
 for (const [id, team] of [['joinBlue', 3], ['joinRed', 2]]) $(id).addEventListener('click', () => {
     selectedPreference = team;
     try {localStorage.setItem('football-preferred-team:' + (account?.id || 'viewer'), String(team));} catch {}
-    send({type: 'team', team});
+    send({type: 'team', team}); canvas.focus({preventScroll: true});
 });
 for (const id of ['toggleGameUi', 'toggleFullscreenUi']) $(id).addEventListener('click', () => setGameUiHidden(!gameUiHidden));
-$('readyButton').addEventListener('click', () => {warmAudio(); send({type: 'ready', ready: !self()?.ready});});
+$('readyButton').addEventListener('click', () => {warmAudio(); send({type: 'ready', ready: !self()?.ready}); canvas.focus({preventScroll: true});});
 for (const button of document.querySelectorAll('[data-mode-vote]')) button.addEventListener('click', () => {
     releaseInput(); send({type: 'modeVote', mode: button.dataset.modeVote});
 });
@@ -696,12 +704,14 @@ for (const [id, yes] of [['rebalanceYes', true], ['rebalanceNo', false]]) $(id).
 });
 for (const [id, type] of [['startMatch', 'start'], ['abortMatch', 'abort'], ['rematchMatch', 'rematch']]) $(id).addEventListener('click', () => {warmAudio(); send({type}); canvas.focus({preventScroll: true});});
 buildSettingsFields();
-$('matchSettingsForm').addEventListener('input', () => {settingsDirty = true; if (room) updateSettings();});
+$('matchSettingsForm').addEventListener('input', () => {
+    settingsDirty = settingsFingerprint(readSettingsFields()) !== settingsFingerprint(room?.pendingSettings || room?.settings || DEFAULT_MATCH_SETTINGS);
+    if (room) updateSettings();
+});
 $('matchSettingsForm').addEventListener('submit', event => {
     event.preventDefault();
-    if (!self()?.admin || room.status !== 'lobby') return;
-    const patch = Object.fromEntries(Object.keys(SETTING_RULES).map(key => [key, Number($('setting-' + key).value)]));
-    const checked = validateMatchSettings(patch, room.settings);
+    if (!self()?.admin) return;
+    const checked = validateMatchSettings(readSettingsFields(), room.pendingSettings || room.settings);
     if (checked.error) {setText($('settingsStatus'), checked.error); return;}
     pendingSettingsSignature = settingsFingerprint(checked.settings);
     if (send({type: 'settings', settings: checked.settings})) {updateSettings(); setText($('settingsStatus'), 'Applying settings…');}
@@ -876,11 +886,11 @@ function smoothed(id, target, dt) {
 
 function draw(now) {
     const dt = Math.min(0.05, (now - lastFrameAt) / 1000); lastFrameAt = now;
-    if (predicted && room?.status === 'playing' && isOpen() && now - lastSnapshotAt < 500) {
+    if (predicted && movementPhase() && isOpen() && now - lastSnapshotAt < 500) {
         let steps = 0;
         while (now - lastPredictionAt >= 1000 / C.TICK_RATE && predictionSteps < 7 && steps++ < 3) {
             if (predictionStops(predicted)) break;
-            predicted = physics.step(predicted, predictionInput()); lastPredictionAt += 1000 / C.TICK_RATE; predictionSteps++;
+            predicted = physics.step(predicted, predictionInput(), predictionOptions()); lastPredictionAt += 1000 / C.TICK_RATE; predictionSteps++;
         }
     }
     // Both members and public viewers render the same server state. A stalled
@@ -934,7 +944,7 @@ function draw(now) {
     else if (!room) {banner = 'FOOTBALL'; caption = 'Join the lobby and play.';}
     else if (!ready) {banner = reconnecting ? 'RECONNECTING' : 'CONNECTING'; caption = 'Waiting for the room…';}
     else if (room.status === 'voting' || room.status === 'results') {banner = ''; caption = '';}
-    else if (room.status === 'lobby') {banner = 'LOBBY'; caption = 'Join a team. Ready up to start.';}
+    else if (room.status === 'lobby') {banner = ''; caption = '';}
     else if (room.status === 'finished') {banner = teamName(room.winner).toUpperCase() + ' TEAM WINS'; caption = 'Ready up for the next game.';}
     else if (authoritative?.ftu >= 0) {banner = String(Math.ceil(authoritative.ftu / 30)); caption = 'ROUND STARTS IN';}
     else if (authoritative?.fte >= 0) {banner = teamName(authoritative.lscr).toUpperCase() + ' TEAM SCORES'; caption = 'Next kickoff shortly';}

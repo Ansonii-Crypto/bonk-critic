@@ -9,6 +9,36 @@ const approximately = (actual, expected, tolerance = 1e-9) => {
     assert.ok(Math.abs(actual - expected) <= tolerance, `${actual} should equal ${expected} (±${tolerance})`);
 };
 
+test('lobby practice accepts movement and kicks without kickoff freezes, goals or round resets', () => {
+    const physics = new FootballPhysics(), state = kickingState();
+    state.ftu = 120; state.fte = 0;
+    const next = physics.step(state, [{right: true, action: true}], {practice: true});
+    assert.ok(next.discs[0].x > state.discs[0].x);
+    assert.ok(next.ball.xv > 24);
+    assert.equal(next.ftu, -1); assert.equal(next.fte, -1);
+    assert.deepEqual(next.scores, [0, 0, 0, 0]);
+    assert.ok(next.sts.some(sound => sound.i === 'footKick'));
+    Object.assign(next.ball, {x: 29 / C.PPM, y: 250 / C.PPM, xv: -20, yv: 0});
+    const throughGoal = physics.step(next, [], {practice: true});
+    assert.deepEqual(throughGoal.scores, [0, 0, 0, 0]);
+    assert.equal(throughGoal.ftu, -1); assert.equal(throughGoal.fte, -1);
+    assert.equal(throughGoal.sts.some(sound => sound.i === 'footGoal'), false);
+});
+
+test('lobby practice keeps a ball shot through a goal reachable and players can use the full canvas', () => {
+    const physics = new FootballPhysics(); let state = active([players[0]]);
+    Object.assign(state.ball, {x: 0.1, y: 250 / C.PPM, xv: -30, yv: 0});
+    Object.assign(state.discs[0], {x: 0.5, y: 1.1, xv: -5, yv: -5});
+    state = physics.step(state, [{left: true, up: true}], {practice: true});
+    assert.equal(state.ball.x, C.BALL_RADIUS); assert.ok(state.ball.xv > 0);
+    assert.equal(state.discs[0].x, C.PLAYER_RADIUS); assert.equal(state.discs[0].y, C.PLAYER_RADIUS);
+    for (let index = 0; index < 600; index++) state = physics.step(state, [{right: true, down: true}], {practice: true});
+    assert.equal(state.discs[0].x, C.WIDTH / C.PPM - C.PLAYER_RADIUS);
+    assert.equal(state.discs[0].y, C.HEIGHT / C.PPM - C.PLAYER_RADIUS);
+    assert.ok(state.ball.x >= C.BALL_RADIUS && state.ball.x <= C.WIDTH / C.PPM - C.BALL_RADIUS);
+    assert.deepEqual(state.scores, [0, 0, 0, 0]);
+});
+
 function active(roster = players) {
     return createState(roster, {kickoffTicks: -1, seed: 42});
 }

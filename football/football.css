@@ -2127,72 +2127,27 @@ kbd {
     gap: 6px;
 }
 
-.team-preference-panel {
-    margin-top: 16px;
-    padding: 0;
-    border: 0;
-    background: transparent;
-}
 
-.team-preference-panel h3 {
-    margin-bottom: 11px;
-    font-size: 12px;
-}
 
-.team-preference-buttons {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 9px;
-}
 
-.preference-button {
-    min-height: 37px;
-    border-width: 2px;
-    background: #fff9e9;
-    color: var(--text);
-    box-shadow: 0 2px 0 var(--ink);
-    font-size: 12px;
-}
 
-.preference-button .team-dot {
-    margin: 0;
-    background: var(--blue);
-}
 
-.preference-blue {
-    border-color: #497bac;
-    color: #365f88;
-    box-shadow: 0 2px 0 #497bac;
-}
 
-.preference-red {
-    border-color: #b75954;
-    color: #9f4846;
-    box-shadow: 0 2px 0 #b75954;
-}
 
-.preference-red .team-dot {
-    border-color: #924744;
-    background: var(--red);
-}
 
-.preference-random {
-    grid-column: 1 / -1;
-    justify-self: center;
-    min-width: 140px;
-}
 
-.preference-button[aria-pressed="true"] {
-    background: #deebd2;
-    outline: 2px solid #738a5b;
-    outline-offset: 2px;
-}
 
-.team-preference-panel .section-description {
-    margin-top: 12px;
-    text-align: center;
-    color: #f2f4e6;
-}
+
+
+
+
+
+
+
+
+
+
+
 
 .team-lists {
     display: grid;
@@ -2291,29 +2246,13 @@ kbd {
     color: var(--text);
 }
 
-.team-preference-panel.is-live-preference {
-    position: absolute;
-    z-index: 6;
-    top: 60px;
-    right: 12px;
-    width: min(230px, 35%);
-    margin: 0;
-}
 
-.is-live-preference h3, .is-live-preference .section-description {
-    display: none;
-}
 
-.is-live-preference .preference-button {
-    min-height: 26px;
-    padding: 5px 8px;
-    font-size: 10px;
-}
 
-.is-live-preference .preference-random {
-    min-width: 0;
-    width: 75%;
-}
+
+
+
+
 
 .field-ui-toggle {
     display: none;
@@ -2735,28 +2674,14 @@ kbd {
         padding: 5px 7px;
         font-size: 8px;
     }
-    .team-preference-panel {
-        margin-top: 12px;
-        padding: 9px;
-    }
-    .team-preference-panel h3 {
-        margin-bottom: 8px;
-        font-size: 10px;
-    }
-    .team-preference-panel .section-description {
-        display: none;
-    }
+
+
+
     .teams-card {
         padding: 12px;
     }
-    .preference-button {
-        min-height: 29px;
-        padding-block: 6px;
-        font-size: 11px;
-    }
-    .preference-random {
-        min-width: 120px;
-    }
+
+
     .team-heading h3 {
         font-size: 11px;
     }
@@ -2835,48 +2760,181 @@ kbd {
     }
 }
 
-/* The lobby keeps the team lists above optional side preferences. */
+/* A compact lobby dock leaves the rest of the pitch playable. */
 .arena-frame.showing-teams {
-    height: max(580px, calc(100dvh - 250px));
-    max-height: none;
-    aspect-ratio: auto;
+    min-height: 320px;
 }
 
-.showing-teams .teams-overlay {
-    padding-bottom: 125px;
+.teams-overlay {
+    display: grid;
     place-items: start center;
+    padding: 49px 14px 0;
+    background: transparent;
+    pointer-events: none;
 }
 
 .teams-card {
     display: flex;
     flex-direction: column;
+    width: 100%;
+    max-height: min(270px, calc(100% - 70px));
     min-height: 0;
-    flex-shrink: 0;
-}
-
-.teams-card .room-heading {
-    order: 0;
-}
-
-.teams-card .room-heading .eyebrow {
-    color: #e9efdc;
+    margin: 0;
+    padding: 0 3px 5px;
+    border: 0;
+    background: transparent;
+    overflow-y: auto;
+    pointer-events: none;
 }
 
 .teams-card .lobby-panel {
-    order: 2;
+    order: 0;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    border: 0;
 }
 
-.teams-card .team-preference-panel {
-    order: 3;
+.team-lists {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    align-items: stretch;
+}
+
+.teams-card .team-section {
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) auto;
+    min-width: 0;
+    gap: 6px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+
+.spectator-team {
+    grid-column: auto;
+}
+
+.team-roster-card {
+    min-height: 70px;
+    min-width: 0;
+    padding: 8px 10px;
+    pointer-events: auto;
+}
+
+.teams-card .team-heading h3 {
+    font-size: 11px;
+}
+
+.teams-card .roster {
+    min-height: 20px;
+    max-height: 62px;
+    margin-top: 6px;
+    gap: 3px;
+    overflow-y: auto;
+}
+
+.teams-card .roster li {
+    min-width: 0;
+    padding: 4px 5px;
+    gap: 4px;
+}
+
+.teams-card .roster-name {
+    min-width: 0;
+    flex: 1 1 75px;
+    overflow-wrap: anywhere;
+}
+
+.join-team {
+    width: 100%;
+    min-width: 0;
+    min-height: 27px;
+    padding: 6px 9px;
+    font-size: 11px;
+    pointer-events: auto;
+}
+
+.lobby-action-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 7px 12px;
+    margin-top: 9px;
+}
+
+.lobby-status {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 7px;
+}
+
+.lobby-status .mode-label {
+    margin: 0;
+    font-size: 10px;
+}
+
+.teams-card .ready-controls {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 7px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+
+.teams-card #readyButton,
+.teams-card .admin-match-actions button {
+    width: auto;
+    min-width: 95px;
+    min-height: 29px;
+    padding: 6px 10px;
+    font-size: 11px;
+}
+
+.teams-card .admin-match-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+
+.teams-card .ready-controls button,
+.teams-card .ready-controls .admin-match-actions {
+    pointer-events: auto;
+}
+
+.teams-card #copyRoomLink {
+    min-height: 27px;
+    padding: 6px 9px;
+    font-size: 10px;
+}
+
+.lobby-ready-summary {
+    margin: 7px 0 0;
+    font-size: 10px;
+    line-height: 1.4;
+}
+
+.teams-card #readySummary {
+    max-width: none;
 }
 
 .teams-card .game-overlay {
     order: 1;
     flex: 0 0 auto;
+    pointer-events: auto;
 }
 
 .teams-card .game-overlay .field-overlay-card {
-    padding: 12px;
+    padding: 10px;
 }
 
 .teams-card .game-overlay .overlay-heading .eyebrow,
@@ -2888,28 +2946,70 @@ kbd {
 
 .teams-card .game-overlay h2 {
     margin: 0;
-    font-size: 18px;
+    font-size: 17px;
 }
 
 .teams-card .mode-vote-panel {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 8px;
-    margin-top: 10px;
+    gap: 7px;
+    margin-top: 8px;
 }
 
 .teams-card .mode-vote-button {
-    padding: 10px;
+    padding: 8px;
 }
 
-.showing-teams .football-chat {
-    z-index: 20;
-    width: min(450px, calc(100% - 24px));
+.setting-input-row {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    gap: 6px;
 }
 
-.showing-teams .football-chat .chat-log {
-    height: auto;
-    max-height: 65px;
+.rockets-hud {
+    flex-wrap: wrap;
+}
+
+.rocket-side-controls {
+    display: flex;
+    gap: 5px;
+    flex: 1 1 100%;
+}
+
+.rocket-side-controls button {
+    min-height: 23px;
+    padding: 4px 8px;
+    border-width: 1px;
+    background: #fff9e9;
+    color: var(--text);
+    box-shadow: none;
+    font-size: 9px;
+}
+
+#rocketSideBlue[aria-pressed="true"] {
+    background: #dbeaf4;
+    border-color: #497bac;
+    color: #365f88;
+}
+
+#rocketSideRed[aria-pressed="true"] {
+    background: #f2dcd5;
+    border-color: #b75954;
+    color: #9f4846;
+}
+
+.setting-input-row input {
+    flex: 1 1 auto;
+    min-width: 0;
+    width: 0;
+}
+
+.setting-reset {
+    flex: 0 0 auto;
+    min-height: 32px;
+    padding: 6px 8px;
+    font-size: 10px;
 }
 
 .page-heading-actions {
@@ -2922,32 +3022,92 @@ kbd {
         align-items: flex-end;
         gap: 8px;
     }
-    .teams-card .room-heading h2 {
-        font-size: 18px;
+    .teams-overlay {
+        padding: 40px 7px 0;
+    }
+    .teams-card {
+        max-height: calc(100% - 70px);
+        padding: 0 1px 4px;
+    }
+    .team-lists {
+        gap: 5px;
+    }
+    .teams-card .team-section {
+        gap: 4px;
     }
     .team-roster-card {
-        min-height: 90px;
-        padding: 9px;
+        min-height: 55px;
+        padding: 5px;
+        border-width: 1px;
+        border-radius: 4px;
+    }
+    .teams-card .team-heading h3 {
+        gap: 4px;
+        font-size: 9px;
+    }
+    .teams-card .team-dot {
+        width: 7px;
+        height: 7px;
+        border-width: 1px;
+    }
+    .teams-card .roster {
+        min-height: 15px;
+        max-height: 35px;
+        margin-top: 4px;
+    }
+    .teams-card .roster li {
+        padding: 2px;
+        gap: 2px;
+        font-size: 8px;
     }
     .teams-card .roster-name {
-        flex-basis: 75px;
+        flex-basis: 40px;
+    }
+    .teams-card .roster-identity,
+    .teams-card .roster-actions {
+        display: none;
+    }
+    .teams-card .ready-indicator {
+        padding: 1px 3px;
+        font-size: 7px;
     }
     .join-team {
-        min-width: 0;
-        width: 100%;
-        font-size: 10px;
+        min-height: 22px;
+        padding: 4px;
+        font-size: 9px;
     }
-    .teams-card .team-preference-panel {
-        padding: 0;
+    .lobby-action-row {
+        gap: 6px;
+        margin-top: 6px;
     }
-    .showing-teams .football-chat {
-        width: calc(100% - 14px);
-        max-width: none;
+    .lobby-status {
+        gap: 4px;
+    }
+    .lobby-status .section-note,
+    .lobby-status .mode-label {
+        font-size: 8px;
+    }
+    .teams-card .ready-controls,
+    .teams-card .admin-match-actions {
+        gap: 5px;
+    }
+    .teams-card #readyButton,
+    .teams-card .admin-match-actions button {
+        min-width: 65px;
+        min-height: 24px;
+        padding: 4px 6px;
+        font-size: 9px;
+    }
+    .teams-card #copyRoomLink {
+        min-height: 24px;
+        padding: 4px 6px;
+        font-size: 8px;
+    }
+    .lobby-ready-summary {
+        margin-top: 5px;
+        font-size: 8px;
     }
     .teams-card .mode-vote-heading {
         flex-wrap: wrap;
-    }
-    .team-preference-panel.is-live-preference {
-        top: 45px;
     }
 }

@@ -8,11 +8,11 @@
         <meta name="description" content="The shared football pitch on Bonk Critic.">
         <title>Football | Bonk Critic</title>
         <link rel="stylesheet" href="../account.css">
-        <link rel="stylesheet" href="./football.css?v=20261127-football-8">
+        <link rel="stylesheet" href="./football.css?v=20261127-football-9">
         <script src="../config.js"></script>
         <script src="../focus.js" defer></script>
         <script src="../skin-renderer.js" defer></script>
-        <script type="module" src="./client.js?v=20261127-football-8"></script>
+        <script type="module" src="./client.js?v=20261127-football-9"></script>
     </head>
     <body>
         <div id="footballApp" class="football-app">
@@ -67,31 +67,11 @@
 
                             <div id="teamsOverlay" class="pitch-overlay teams-overlay" role="region" aria-labelledby="roomTitle" hidden>
                                 <section id="roomPanel" class="room-panel teams-card" aria-labelledby="roomTitle" hidden>
-                                    <div class="room-heading">
-                                        <div>
-                                            <p class="eyebrow">THE SHARED PITCH</p>
-                                            <h2 id="roomTitle">Football teams</h2>
-                                            <span id="roomCodeDisplay" class="sr-only"></span>
-                                        </div>
-                                        <div class="room-heading-actions"><button id="copyRoomLink" type="button" class="button-secondary button-small">Invite friends</button></div>
-                                    </div>
-
-                                    <section id="teamPreferencePanel" class="team-preference-panel" aria-labelledby="teamPreferenceTitle">
-                                        <h3 id="teamPreferenceTitle">Team preference</h3>
-                                        <div class="team-preference-buttons" role="group" aria-label="Preferred team">
-                                            <button id="preferBlue" type="button" class="preference-button preference-blue" aria-pressed="false"><span class="team-dot" aria-hidden="true"></span>Blue</button>
-                                            <button id="preferRed" type="button" class="preference-button preference-red" aria-pressed="false"><span class="team-dot" aria-hidden="true"></span>Red</button>
-                                            <button id="preferRandom" type="button" class="preference-button preference-random" aria-pressed="true">Random</button>
-                                        </div>
-                                        <p class="section-description">Your preference applies when teams are selected.</p>
-                                    </section>
+                                    <h2 id="roomTitle" class="sr-only">Football teams</h2>
+                                    <span id="roomCodeDisplay" class="sr-only"></span>
 
                                     <section id="lobbyPanel" class="lobby-panel" aria-labelledby="lobbyTitle">
-                                        <div class="section-heading">
-                                            <h3 id="lobbyTitle">Teams</h3>
-                                            <span id="lobbyStateLabel" class="section-note">LOBBY</span>
-                                        </div>
-                                        <p id="modeLabel" class="mode-label">Balanced teams</p>
+                                        <h3 id="lobbyTitle" class="sr-only">Teams</h3>
                                         <div class="team-lists">
                                             <section class="team-section blue-team" aria-labelledby="blueTeamTitle">
                                                 <div class="team-roster-card">
@@ -115,14 +95,18 @@
                                                 <button id="spectate" type="button" class="join-team button-secondary button-small">Spectate</button>
                                             </section>
                                         </div>
-                                        <div class="ready-controls">
-                                            <p id="readySummary" role="status">Ready up when you want to play.</p>
-                                            <button id="readyButton" type="button" class="button-primary" aria-pressed="false">Ready up</button>
+                                        <div class="lobby-action-row">
+                                            <div class="lobby-status"><span id="lobbyStateLabel" class="section-note">LOBBY</span><span id="modeLabel" class="mode-label">Balanced teams</span></div>
+                                            <div class="ready-controls">
+                                                <button id="readyButton" type="button" class="button-primary" aria-pressed="false">Ready up</button>
+                                                <div id="adminMatchControls" class="admin-match-actions" role="group" aria-label="Admin match controls" hidden>
+                                                    <button id="startMatch" type="button" class="button-primary" hidden>Start match</button>
+                                                    <button id="rematchMatch" type="button" class="button-primary" hidden>Play again</button>
+                                                </div>
+                                                <button id="copyRoomLink" type="button" class="button-secondary button-small">Invite friends</button>
+                                            </div>
                                         </div>
-                                        <div id="adminMatchControls" class="admin-match-actions" role="group" aria-label="Admin match controls" hidden>
-                                            <button id="startMatch" type="button" class="button-primary" hidden>Start match</button>
-                                            <button id="rematchMatch" type="button" class="button-primary" hidden>Play again</button>
-                                        </div>
+                                        <p id="readySummary" class="lobby-ready-summary" role="status">Ready up when you want to play.</p>
                                     </section>
 
                                     <div id="gameOverlay" class="game-overlay" role="region" aria-labelledby="overlayTitle" aria-describedby="overlayDescription" hidden>
@@ -153,6 +137,7 @@
                             <div id="rocketsHud" class="rockets-hud" aria-label="Rockets turn" hidden>
                                 <div class="rocket-turn-info"><span class="hud-label">ROCKETS · SHOOTING NOW</span><strong id="rocketTurnName"></strong></div>
                                 <span id="rocketTurnTimer" class="rocket-turn-timer" role="timer" aria-live="off"></span>
+                                <div id="rocketSideControls" class="rocket-side-controls" role="group" aria-label="Shooting side" hidden><button id="rocketSideBlue" type="button" aria-pressed="false">Blue</button><button id="rocketSideRed" type="button" aria-pressed="false">Red</button></div>
                             </div>
 
                             <div id="rebalanceNotice" class="rebalance-overlay" hidden>
@@ -203,7 +188,7 @@
                             </details>
                             <details id="hostControls" class="panel admin-panel" hidden>
                                 <summary><span>Site admin</span><span class="admin-preview">Pitch &amp; match settings</span></summary>
-                                <div class="admin-controls"><form id="matchSettingsForm" class="match-settings-form"><div id="settingsFields" class="settings-fields"></div><p id="settingsStatus" class="settings-status" role="status"></p><div class="settings-actions"><p>Settings apply to this shared pitch.</p><button id="saveSettings" type="submit" class="button-secondary button-small">Save settings</button></div></form></div>
+                                <div class="admin-controls"><form id="matchSettingsForm" class="match-settings-form"><div id="settingsFields" class="settings-fields"></div><p id="settingsStatus" class="settings-status" role="status"></p><div class="settings-actions"><p>Apply changes for the next round.</p><button id="saveSettings" type="submit" class="button-secondary button-small">Apply next round</button></div></form></div>
                             </details>
                         </div>
                     </section>

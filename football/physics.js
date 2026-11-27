@@ -264,6 +264,14 @@ function clampPlayer(body, ppm, settings) {
     }
 }
 
+function keepPracticeBall(body, ppm, settings) {
+    const position = body.GetPosition(), velocity = body.GetLinearVelocity(), radius = settings.ballRadius;
+    for (const [axis, maximum] of [['x', settings.pitchWidth / ppm - radius], ['y', settings.pitchHeight / ppm - radius]]) {
+        if (position[axis] < radius) {position[axis] = radius; velocity[axis] = Math.abs(velocity[axis]) * C.WALL_RESTITUTION;}
+        else if (position[axis] > maximum) {position[axis] = maximum; velocity[axis] = -Math.abs(velocity[axis]) * C.WALL_RESTITUTION;}
+    }
+}
+
 export class FootballPhysics {
     constructor() {
         this.world = new World(new Vec2(0, 0));
@@ -292,6 +300,7 @@ export class FootballPhysics {
         // Results keep their native momentum without accepting controls or
         // advancing the match's score, countdowns, or kickoff lifecycle.
         const coast = playerChanges?.coast === true;
+        const practice = !coast && playerChanges?.practice === true;
         const settings = state.settings || DEFAULT_MATCH_SETTINGS;
         const world = this.world;
         world.novakReset();
@@ -312,7 +321,7 @@ export class FootballPhysics {
                 });
                 ready[slot] = disc.kickReady;
             });
-            if (!coast && state.ftu === -1) {
+            if (!coast && (practice || state.ftu === -1)) {
                 bodies.forEach((body, slot) => {
                     const input = inputsBySlot[slot];
                     if (!input) return;
@@ -320,14 +329,17 @@ export class FootballPhysics {
                     ready[slot] = kick(body, state.discs[slot], input, ball, this.sounds, settings);
                 });
             }
-            if (coast || state.ftu === -1) world.Step(C.DT, C.VELOCITY_ITERATIONS, C.POSITION_ITERATIONS);
+            if (coast || practice || state.ftu === -1) world.Step(C.DT, C.VELOCITY_ITERATIONS, C.POSITION_ITERATIONS);
             world.ClearForces();
             bodies.forEach(body => clampPlayer(body, state.ppm, settings));
+            // Lobby goals do not end rounds. Bounce at the outer canvas edge
+            // so a practice kick through an opening stays reachable.
+            if (practice) keepPracticeBall(ball, state.ppm, settings);
 
             const scores = state.scores.slice();
             let lastScorer = state.lscr;
             let goalScored = false;
-            if (!coast && state.ftu === -1 && state.fte === -1 && state.goalHeight !== -1) {
+            if (!coast && !practice && state.ftu === -1 && state.fte === -1 && state.goalHeight !== -1) {
                 const x = ball.GetPosition().x;
                 const leftGoal = (state.borderThickness + state.borderThicknessXInner) / state.ppm;
                 const rightGoal = (settings.pitchWidth - state.borderThickness - state.borderThicknessXInner) / state.ppm;
@@ -356,13 +368,13 @@ export class FootballPhysics {
                 ni: false,
                 players: state.players.map(player => player && !left.has(player.id) ? {...player} : null),
                 sts: state.sts.filter(sound => sound && sound.f > 0).map(sound => ({...sound, f: sound.f - 1})).concat(this.sounds),
-                fte: coast ? state.fte : goalScored ? C.GOAL_TICKS : Math.max(-1, state.fte - 1),
-                ftu: coast ? state.ftu : Math.max(-1, state.ftu - 1),
+                fte: practice ? -1 : coast ? state.fte : goalScored ? C.GOAL_TICKS : Math.max(-1, state.fte - 1),
+                ftu: practice ? -1 : coast ? state.ftu : Math.max(-1, state.ftu - 1),
                 ball: outputBody(ball),
                 discs: bodies.map((body, slot) => ({...outputBody(body), team: state.discs[slot].team, kickReady: ready[slot]})),
             };
             if (state.settings) next.settings = {...settings};
-            if (!coast && state.fte === 0) {
+            if (!coast && !practice && state.fte === 0) {
                 const kickoff = createState(next.players, {seed: state.seed, settings});
                 kickoff.scores = scores;
                 return kickoff;
