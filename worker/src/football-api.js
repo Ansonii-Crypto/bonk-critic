@@ -34,7 +34,7 @@ export async function footballApi(request, env, identity = null) {
         internal = new Request('https://football.internal/' + (watching ? 'watch' : 'socket') + (watching ? '' : url.search), {headers});
     } else if (info) internal = new Request('https://football.internal/info');
     else {
-        const trusted = identity && typeof identity.username === 'string' ? {username:identity.username, bonkId:String(identity.bonkId ?? identity.bonk_id ?? ''), userSessionHash:identity.userSessionHash || null, adminSessionHash:identity.adminSessionHash || null, adminAccountId:identity.adminAccountId || null} : null;
+        const trusted = identity && typeof identity.username === 'string' ? {username:identity.username, bonkId:String(identity.bonkId ?? identity.bonk_id ?? ''), userSessionHash:identity.userSessionHash || null, adminAccountId:identity.adminAccountId || null} : null;
         internal = new Request('https://football.internal/join', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({displayName:body.displayName, resumeToken:body.resumeToken, preferredTeam:body.preferredTeam, identity:trusted})});
     }
     const response = await stub.fetch(internal);

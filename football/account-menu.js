@@ -61,7 +61,7 @@ export function initFootballAccount({request, onSession, onLogout, onError, onLo
         const options = document.createElement('div'); options.className = 'user-account-options';
         const profile = document.createElement('a'); profile.href = '../#/profile'; profile.textContent = 'Profile'; options.append(profile);
         if (state.admin_account) {
-            const admin = document.createElement('a'); admin.href = '../#/admin'; admin.textContent = 'Admin tools'; options.append(admin);
+            const admin = document.createElement('a'); admin.href = '../#/admin'; admin.textContent = 'Website admin tools'; options.append(admin);
         }
         const logout = document.createElement('button'); logout.type = 'button'; logout.className = 'account-logout'; logout.textContent = 'Log out';
         logout.onclick = async () => {

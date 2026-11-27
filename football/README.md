@@ -104,9 +104,13 @@ overlays. Its Show game UI button restores them. Escape and a double tap on
 the pitch also restore controls. The page scrolls underneath its header.
 
 Visitors can watch without signing in. Joining requires a verified Bonk
-identity; anonymous joins are rejected on the server. Administrator controls
-require the site's existing account sign-in and elevated administrator session;
-joining first does not grant permissions. Reloading the same tab resumes its seat
+identity; anonymous joins are rejected on the server. Football administrator
+controls unlock automatically for a signed-in Bonk account linked to an
+activated site administrator. Football does not require a separate personal-code
+session. Each privileged action checks the live Bonk session and administrator
+link in the database; logout, expiry or role removal revokes access. The main
+website's assessment and account-management tools retain their code check.
+Reloading the same tab resumes its seat
 using a room-specific credential, without placing account credentials in the
 invite link.
 
@@ -209,8 +213,11 @@ at 30 Hz and sends snapshots at 15 Hz. Clients send held input flags and use the
 same physics for bounded local prediction, with remote-state interpolation.
 `prediction.js` keeps a bounded timeline of local held inputs and replays
 elapsed physics ticks rather than treating wire acknowledgements as ticks.
-The prediction clock continues across snapshots. Normal predicted movement
-renders directly; only corrections to authoritative state are smoothed.
+The prediction clock continues across snapshots. A cached native-physics preview
+fills display frames between fixed ticks, including ball and post contacts.
+Previewing cannot consume input edges or advance the real prediction state.
+Snapshot lookahead uses one-way age rather than an extra full round trip.
+Corrections blend continuously without hard position clamps that freeze motion.
 Replay is capped at 250 milliseconds and eight steps. Other players retain
 their interpolation buffer. The server's movement force and tick rate are
 unchanged.

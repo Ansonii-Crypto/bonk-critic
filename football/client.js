@@ -3,9 +3,9 @@ import {DEFAULT_MATCH_SETTINGS, SETTING_RULES, validateMatchSettings} from './se
 import {FOOTBALL_MODES, ballSpeed} from './modes.js?v=20261126-football-5';
 import {maskProfanity} from './chat-filter.js?v=20261127-football-6';
 import {DEFAULT_KEYBINDS, BINDING_ACTIONS, validateKeybinds, canonicalBindingCode} from './keybinds.js?v=20261127-football-6';
-import {initFootballAccount} from './account-menu.js?v=20261127-football-8';
+import {initFootballAccount} from './account-menu.js?v=20261127-football-11';
 import {FootballWatcher} from './watcher.js?v=20261127-football-8';
-import {FootballPredictor} from './prediction.js?v=20261127-football-10';
+import {FootballPredictor} from './prediction.js?v=20261127-football-11';
 
 const $ = id => document.getElementById(id);
 const canvas = $('footballCanvas');

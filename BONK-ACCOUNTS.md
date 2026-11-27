@@ -23,6 +23,12 @@ These changes are prepared locally, not deployed. Deploy the database/Worker cha
 
 ## Existing and new administrators
 
+Football at `/football/` uses the signed-in Bonk account's activated administrator
+link directly. It does not require a separate personal-code session. Every
+football management action rechecks that account's live user session and current
+administrator link on the server. The website's assessment and account-management
+tools continue to use the personal-code elevation described above.
+
 After unlocking the primary account, open **Manage Accounts**. Existing secondary administrators initially show **Bonk account not linked**. Enter each intended account's numeric Bonk ID and choose **Link account**. Existing personal codes are preserved. An account may only be linked once through this UI; correcting an erroneous link requires an operator database correction. Verify IDs with their owners before linking them.
 
 Adding a new administrator requires a display name and the intended Bonk account ID. The generated invitation is bound to that ID, expires after ten minutes, and is consumed after successful personal-code creation. Its owner must first sign in to the matching Bonk account. Existing setup links also require a matching link; link old secondary accounts before sending their setup invitation.

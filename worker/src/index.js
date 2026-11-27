@@ -74,8 +74,8 @@ function draftData(input){
 async function main(r,e){let u=new URL(r.url),o=r.headers.get('Origin')||'',p=u.pathname,m=r.method;
 if(m==='OPTIONS')return new Response(null,{status:204,headers:{...H(o,e),'Access-Control-Allow-Methods':'GET,POST,PUT,DELETE,OPTIONS','Access-Control-Allow-Headers':'Content-Type, Authorization, X-Account-Session'}});
 if(p.startsWith('/api/football/')){
- const user=m==='POST'?await identity(r,e):null,admin=user?await session(r,e):null;
- return footballApi(r,e,user?{username:user.username,bonkId:user.bonk_id,userSessionHash:user.token_hash,adminSessionHash:admin?.token_hash,adminAccountId:admin?.id}:null);
+ const user=m==='POST'?await identity(r,e):null,admin=user?await linkedAdmin(e,user):null;
+ return footballApi(r,e,user?{username:user.username,bonkId:user.bonk_id,userSessionHash:user.token_hash,adminAccountId:admin?.code_ready?admin.id:null}:null);
 }
 if(p==='/api/tier-system'&&m==='GET')return J({cutoffs:BonkRatings.cutoffs,metadata:BonkRatings.metadata},200,o,e);
 if(p==='/api/bonk/login'&&m==='POST'){

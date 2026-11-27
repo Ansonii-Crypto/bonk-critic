@@ -56,16 +56,16 @@ export class FootballRoom {
     }
     async adminAllowed(member) {
         const auth = member.adminContext;
-        if (!auth || !this.env.DB || !member.bonkId) return false;
-        // Reuse the site's paired user/admin rules on every privileged action.
-        const row = await this.env.DB.prepare(`SELECT a.id FROM admin_sessions s
-            JOIN admin_accounts a ON a.id=s.account_id
-            JOIN admin_session_identity i ON i.token_hash=s.token_hash
-            JOIN user_sessions u ON u.token_hash=i.user_session_hash
-            JOIN admin_bonk_links l ON l.account_id=a.id AND l.bonk_id=u.bonk_id
-            WHERE s.token_hash=? AND s.expires_at>? AND i.user_session_hash=? AND u.expires_at>?
-            AND u.bonk_id=? AND a.id=? AND EXISTS(SELECT 1 FROM admin_credentials c WHERE c.account_id=a.id AND c.code_hash IS NOT NULL)`)
-            .bind(auth.adminSessionHash, Date.now(), auth.userSessionHash, Date.now(), member.bonkId, auth.adminAccountId).first();
+        if (!auth?.userSessionHash || !this.env.DB || !member.bonkId) return false;
+        // Football alone recognizes an activated administrator linked to the
+        // current Bonk login. Re-read the live link and user session for every
+        // privileged operation; an old admin-session hash grants nothing here.
+        const row = await this.env.DB.prepare(`SELECT a.id FROM user_sessions u
+            JOIN admin_bonk_links l ON l.bonk_id=u.bonk_id
+            JOIN admin_accounts a ON a.id=l.account_id
+            WHERE u.token_hash=? AND u.expires_at>? AND u.bonk_id=?
+            AND EXISTS(SELECT 1 FROM admin_credentials c WHERE c.account_id=a.id AND c.code_hash IS NOT NULL)`)
+            .bind(auth.userSessionHash, Date.now(), member.bonkId).first();
         return Boolean(row?.id);
     }
     async join(body) {
@@ -92,7 +92,7 @@ export class FootballRoom {
         if (!member.bonkId && identity?.bonkId && typeof identity.username === 'string' && identity.username.trim()) {
             member.bonkId = String(identity.bonkId); member.verified = true; member.name = cleanName(identity.username, 32);
         }
-        member.adminContext = identity?.adminSessionHash && identity?.userSessionHash && identity?.adminAccountId ? {adminSessionHash:identity.adminSessionHash, userSessionHash:identity.userSessionHash, adminAccountId:identity.adminAccountId} : null;
+        member.adminContext = identity?.userSessionHash ? {userSessionHash:identity.userSessionHash, adminAccountId:identity.adminAccountId || null} : null;
         member.admin = await this.adminAllowed(member);
         if (!this.room?.members.includes(member)) return json({error:'Your lobby session expired. Join again.'}, 403);
         const resumeToken = randomToken(); member.resumeHash = await digest(resumeToken);
@@ -221,7 +221,7 @@ export class FootballRoom {
         const allowed = await this.adminAllowed(member);
         // A kick, reconnect, or logout may occur during D1's asynchronous query.
         if (!this.room || this.connections.get(member.id) !== connection || !this.room.members.includes(member)) return;
-        if (!allowed) {member.admin = false; this.reject(connection, 'A current site administrator session is required.'); this.broadcastRoom(); return;}
+        if (!allowed) {member.admin = false; this.reject(connection, 'Sign in with a Bonk account linked to an activated administrator.'); this.broadcastRoom(); return;}
         member.admin = true;
         if (message.type === 'settings') {
             const patch = message.settings ?? (Object.hasOwn(message, 'scoreLimit') ? {scoreLimit:message.scoreLimit} : null), result = validateMatchSettings(patch, this.room.pendingSettings || this.room.settings);

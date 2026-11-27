@@ -25,12 +25,85 @@ test('history is bounded and heartbeat density never changes native simulation s
     assert.ok(bounded.records.length <= 16); assert.ok(bounded.records[0].at >= 9800);
 });
 
-test('normal rendered motion is direct and only authority error is smoothed', () => {
+test('corrections keep moving smoothly and a stopped target settles without a position freeze', () => {
     const offsets = new ReconciliationOffsets(); const target = {x:10, y:3, xv:4, yv:0}; assert.equal(offsets.render('self', target, 0), target);
     offsets.capture('self', {x:10, y:3}, {x:9, y:3}, 0);
-    const first = offsets.render('self', {x:9.5, y:3, xv:4, yv:0}, 16, {directionX:1});
-    const betweenTicks = offsets.render('self', {x:9.5, y:3, xv:4, yv:0}, 32, {directionX:1}); assert.ok(betweenTicks.x >= first.x);
+    const first = offsets.render('self', {x:9.5, y:3, xv:4, yv:0}, 16);
+    const betweenTicks = offsets.render('self', {x:9.5, y:3, xv:0, yv:0}, 32); assert.ok(betweenTicks.x < first.x); assert.ok(betweenTicks.x > 9.5);
     offsets.capture('self', betweenTicks, {x:100, y:3}, 40, {snap:true}); const teleported = {x:100, y:3, xv:0, yv:0}; assert.equal(offsets.render('self', teleported, 40), teleported);
+});
+
+test('native preview fills every 60 and 144 Hz frame without extra simulation ticks', () => {
+    for (const fps of [60, 144]) {
+        const predictor = new FootballPredictor(), state = initial(); state.ni = false;
+        // Constant native terminal speed makes an accidental 30 Hz staircase
+        // observable independently of acceleration or network corrections.
+        state.discs[0].xv = (32 / 1.05 / 30 * .92) / .08;
+        state.ball = {x:50, y:30, xv:2, yv:0};
+        predictor.recordInput(1, 2, 0);
+        predictor.acceptSnapshot({state, inputs:[2], ackSeq:1}, {now:0, slot:0, practice:true});
+        let previousSelf = predictor.renderBody('self', predictor.state.discs[0], 0).x;
+        let previousBall = predictor.renderBody('ball', predictor.state.ball, 0).x;
+        const expected = state.discs[0].xv / fps;
+        for (let frame = 1; frame <= Math.floor(fps * .75); frame++) {
+            const at = frame * 1000 / fps; predictor.advance(at);
+            const self = predictor.renderBody('self', predictor.state.discs[0], at), ball = predictor.renderBody('ball', predictor.state.ball, at);
+            assert.ok(Math.abs(self.x - previousSelf - expected) < 1e-8, `smooth self frame ${frame} at ${fps} Hz`);
+            assert.ok(ball.x > previousBall, `ball must not repeat a moving frame at ${fps} Hz`);
+            previousSelf = self.x; previousBall = ball.x;
+        }
+        assert.equal(predictor.simulationSteps, Math.floor(Math.floor(fps * .75) * 30 / fps));
+    }
+});
+
+test('render previews are pure and use native wall and kick contacts', () => {
+    const predictor = new FootballPredictor(), state = initial(); state.ni = false;
+    Object.assign(state.discs[0], {x:20, y:22}); Object.assign(state.ball, {x:22.1, y:22});
+    predictor.acceptSnapshot({state, inputs:[0], ackSeq:-1}, {now:0, slot:0, practice:true});
+    predictor.recordInput(1, 16, 1);
+    const untouched = clone(predictor.state), history = clone(predictor.timeline.records);
+    for (const at of [5, 10, 15]) {predictor.renderBody('self', predictor.state.discs[0], at); predictor.renderBody('ball', predictor.state.ball, at);}
+    assert.deepEqual(predictor.state, untouched); assert.deepEqual(predictor.timeline.records, history);
+    assert.equal(predictor.simulationSteps, 0); assert.equal(predictor.pendingHeavy, false);
+    predictor.advance(DT); assert.equal(predictor.simulationSteps, 1); assert.equal(predictor.state.discs[0].kickReady, false); assert.ok(predictor.state.ball.xv > 24);
+    const wall = initial(); wall.ni = true; Object.assign(wall.ball, {x:700 / 11 - .72, y:10, xv:20, yv:0});
+    predictor.acceptSnapshot({state:wall, inputs:[0], ackSeq:1}, {now:100, slot:0, practice:true});
+    for (const at of [105, 110, 120]) assert.ok(predictor.renderBody('ball', predictor.state.ball, at).x <= 700 / 11 - .7 + .02, 'preview keeps the native wall bounce');
+});
+
+test('a mid-tick kick changes velocity without teleporting the presented ball', () => {
+    const predictor = new FootballPredictor(), source = initial(); source.ni = false;
+    Object.assign(source.discs[0], {x:20, y:22}); Object.assign(source.ball, {x:22.1, y:22});
+    predictor.acceptSnapshot({state:source, inputs:[0], ackSeq:-1}, {now:0, slot:0, practice:true});
+    const before = predictor.renderBody('ball', predictor.state.ball, 25);
+    predictor.recordInput(1, 16, 25);
+    const after = predictor.renderBody('ball', predictor.state.ball, 25);
+    assert.ok(Math.abs(before.x - after.x) < 1e-10); assert.ok(Math.abs(before.y - after.y) < 1e-10);
+    assert.equal(predictor.simulationSteps, 0, 'preview must not consume the kick');
+    predictor.advance(30);
+    assert.ok(predictor.renderBody('ball', predictor.state.ball, 30).x > after.x, 'the next display frame responds');
+    predictor.advance(DT); assert.equal(predictor.state.discs[0].kickReady, false); assert.ok(predictor.state.ball.xv > 24);
+});
+
+test('rendering advances snapshot age once and slow corrections do not freeze at either refresh rate', () => {
+    const source = initial(); source.ni = false; Object.assign(source.ball, {x:30, y:20, xv:10, yv:0});
+    const predictor = new FootballPredictor(); predictor.acceptSnapshot({state:source, inputs:[0], ackSeq:-1}, {now:150, rtt:150, slot:0, practice:true});
+    const physics = new FootballPhysics(); let expected = clone(source);
+    for (let step = 0; step < 2; step++) expected = physics.step(expected, [], {practice:true});
+    const future = physics.step(expected, [], {practice:true});
+    const sample = predictor.renderBody('ball', predictor.state.ball, 150);
+    assert.ok(Math.abs(sample.x - (expected.ball.x + (future.ball.x - expected.ball.x) * .25)) < 1e-10, '75 ms age, not 150 ms lookahead');
+    const final = [];
+    for (const fps of [60, 144]) {
+        const offsets = new ReconciliationOffsets(); offsets.capture('ball', {x:.6, y:0}, {x:0, y:0}, 0);
+        let previous = .6;
+        for (let frame = 1; frame <= fps / 2; frame++) {
+            const at = frame / fps, body = offsets.render('ball', {x:at, y:0, xv:1, yv:0}, at * 1000);
+            assert.ok(body.x > previous, `no ${fps} Hz motion hold`); previous = body.x;
+        }
+        final.push(previous);
+    }
+    assert.ok(Math.abs(final[0] - final[1]) < .01, 'correction progress is independent of FPS');
 });
 
 test('snapshots preserve the forward prediction clock and replay bounded elapsed time', () => {

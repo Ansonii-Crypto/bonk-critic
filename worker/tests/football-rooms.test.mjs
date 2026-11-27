@@ -33,6 +33,7 @@ function environment() {
     const db = new DatabaseSync(':memory:'); db.exec(readFileSync(new URL('../schema.sql', import.meta.url), 'utf8'));
     const env = {ALLOWED_ORIGIN:origin, objects:new Map(), db, nextIdentity:1000, API_RATE_LIMITER:{async limit() {return {success:true};}}, LOGIN_RATE_LIMITER:{async limit() {return {success:true};}}};
     env.DB = {prepare(sql) {return {bind(...args) {const statement = db.prepare(sql); return {async first() {return statement.get(...args) || null;}, async run() {return {meta:{changes:Number(statement.run(...args).changes)}};}};}};}};
+    env.DB.batch = async statements => {db.exec('BEGIN'); try {const result = []; for (const statement of statements) result.push(await statement.run()); db.exec('COMMIT'); return result;} catch (error) {db.exec('ROLLBACK'); throw error;}};
     env.FOOTBALL_ROOMS = {idFromName:id => id, get(id) {if (!env.objects.has(id)) env.objects.set(id, new FootballRoom(context(), env)); return env.objects.get(id);}};
     return env;
 }
@@ -112,27 +113,28 @@ test('signed-in ordinary players have no admin power and ready up to auto-start'
     } finally {cleanup(env);}
 });
 
-test('real paired site sessions authorize admins, with expiry/revocation checked for each operation', async () => {
+test('activated linked admins use their Bonk login, with live user-session revocation checked for every operation', async () => {
     const env = environment();
     try {
         const auth = await administrator(env), admin = await member(env, 'Ignored', auth), player = await member(env, 'Guest'), room = roomOf(env);
         assert.equal(roster(room, admin).admin, true);
         await command(room, admin, {type:'settings', settings:{scoreLimit:1, moveForce:0, goalHeight:-1}}); assert.equal(room.room.settings.moveForce, 0); assert.equal(room.room.settings.goalHeight, -1);
         await command(room, admin, {type:'assign', memberId:player.member.id, team:0}); assert.equal(roster(room, player).team, 0);
-        env.db.prepare('DELETE FROM admin_sessions WHERE token_hash=?').run(auth.adminSessionHash);
+        env.db.prepare('DELETE FROM user_sessions WHERE token_hash=?').run(auth.userSessionHash);
         await command(room, admin, {type:'settings', settings:{scoreLimit:9}}); assert.equal(room.room.settings.scoreLimit, 1); assert.equal(roster(room, admin).admin, false);
         await command(room, admin, {type:'kick', memberId:player.member.id}); assert.equal(room.room.members.length, 2);
     } finally {cleanup(env);}
 });
 
-test('worker auth wiring ignores claimed admin, rejects mismatched paired sessions, and accepts genuine elevation', async () => {
+test('worker football auth ignores claimed roles and unrelated admin tokens, and recognizes the activated Bonk link', async () => {
     const env = environment();
     try {
         const auth = await administrator(env), other = await administrator(env, 'b');
+        env.db.prepare('DELETE FROM admin_bonk_links WHERE account_id=?').run(other.adminAccountId);
         const send = headers => worker.fetch(new Request('https://api.test/api/football/lobby', {method:'POST', headers:{Origin:origin, 'Content-Type':'application/json', ...headers}, body:JSON.stringify({displayName:'Claimed admin', admin:true, adminSessionHash:auth.adminSessionHash})}), env);
         const forged = await send({}); assert.equal(forged.status, 401); assert.equal((await forged.json()).error, 'Sign in with your Bonk account to join.');
         const mismatch = await (await send({'X-Account-Session':other.userToken, Authorization:'Bearer ' + auth.adminToken})).json(); assert.equal(mismatch.room.members.find(item => item.id === mismatch.member.id).admin, false);
-        const real = await (await send({'X-Account-Session':auth.userToken, Authorization:'Bearer ' + auth.adminToken})).json(); assert.equal(real.room.members.find(item => item.id === real.member.id).admin, true);
+        const real = await (await send({'X-Account-Session':auth.userToken})).json(); assert.equal(real.room.members.find(item => item.id === real.member.id).admin, true);
     } finally {cleanup(env);}
 });
 
@@ -929,5 +931,75 @@ test('a pending lower score limit finishes at the goal boundary while old field 
         const acknowledgement = admin.socket.received.filter(message => message.type === 'room').at(-1).room; assert.equal(acknowledgement.settings.pitchWidth, 900); assert.equal(acknowledgement.pendingSettings, null);
         room.room.results.deadline = Date.now() - 1; await room.alarm(); for (const data of [admin, player]) await command(room, data, {type:'modeVote', mode:'balanced'});
         for (const data of [admin, player]) await command(room, data, {type:'ready', ready:true}); room.stopTimer(); assert.equal(room.room.status, 'playing'); assert.equal(getPitchGeometry(room.room.state).pixels.width, 900); assert.equal(room.room.state.settings.ballRadius, 1.1); assert.equal(room.room.state.ftu, 120);
+    } finally {cleanup(env);}
+});
+
+test('an activated linked Bonk login administers football without an elevated session while main-site gates still require the code', async () => {
+    const env = environment();
+    try {
+        const auth = await administrator(env); env.db.prepare('DELETE FROM admin_session_identity').run(); env.db.prepare('DELETE FROM admin_sessions').run();
+        const headers = {Origin:origin, 'Content-Type':'application/json', 'X-Account-Session':auth.userToken};
+        const response = await worker.fetch(new Request('https://api.test/api/football/lobby', {method:'POST', headers, body:JSON.stringify({displayName:'Ignored'})}), env); assert.equal(response.status, 200);
+        const joined = await response.json(), socket = await connect(env, joined), admin = {...joined, socket}, room = roomOf(env);
+        assert.equal(roster(room, admin).admin, true); await command(room, admin, {type:'modeVote', mode:'balanced'}); await command(room, admin, {type:'settings', settings:{moveForce:0}}); assert.equal(room.room.settings.moveForce, 0);
+        const sessionResponse = await worker.fetch(new Request('https://api.test/api/session', {headers}), env), session = await sessionResponse.json(); assert.equal(session.user.id, auth.bonkId); assert.equal(session.authenticated, false); assert.equal(session.code_verified, false);
+        assert.equal((await worker.fetch(new Request('https://api.test/api/accounts', {headers}), env)).status, 403);
+        assert.equal((await worker.fetch(new Request('https://api.test/api/players', {method:'POST', headers, body:JSON.stringify({name:'Blocked assessment'})}), env)).status, 401);
+    } finally {cleanup(env);}
+});
+
+test('expired or missing admin-session tokens have no effect on football authority', async () => {
+    const env = environment();
+    try {
+        const auth = await administrator(env); env.db.prepare('UPDATE admin_sessions SET expires_at=0').run();
+        const headers = {Origin:origin, 'Content-Type':'application/json', 'X-Account-Session':auth.userToken, Authorization:'Bearer ' + auth.adminToken};
+        const response = await worker.fetch(new Request('https://api.test/api/football/lobby', {method:'POST', headers, body:'{}'}), env); assert.equal(response.status, 200);
+        const data = await response.json(), socket = await connect(env, data), admin = {...data, socket}, room = roomOf(env);
+        assert.equal(roster(room, admin).admin, true); await command(room, admin, {type:'modeVote', mode:'balanced'}); await command(room, admin, {type:'settings', settings:{scoreLimit:4}}); assert.equal(room.room.settings.scoreLimit, 4);
+        env.db.prepare('DELETE FROM admin_session_identity').run(); env.db.prepare('DELETE FROM admin_sessions').run();
+        await command(room, admin, {type:'settings', settings:{scoreLimit:5}}); assert.equal(room.room.settings.scoreLimit, 5); assert.equal(roster(room, admin).admin, true);
+    } finally {cleanup(env);}
+});
+
+test('unactivated and unlinked users cannot obtain football administration through claimed JSON roles or another admin token', async () => {
+    const env = environment();
+    try {
+        const activated = await administrator(env), ordinary = await administrator(env, 'b'); env.db.prepare('UPDATE admin_credentials SET code_hash=NULL WHERE account_id=?').run(ordinary.adminAccountId);
+        const headers = {Origin:origin, 'Content-Type':'application/json', 'X-Account-Session':ordinary.userToken, Authorization:'Bearer ' + activated.adminToken};
+        const forged = {admin:true, adminAccountId:activated.adminAccountId, userSessionHash:activated.userSessionHash, identity:{username:activated.username, bonkId:activated.bonkId}};
+        const response = await worker.fetch(new Request('https://api.test/api/football/lobby', {method:'POST', headers, body:JSON.stringify(forged)}), env); assert.equal(response.status, 200);
+        const data = await response.json(), socket = await connect(env, data), user = {...data, socket}, room = roomOf(env); assert.equal(roster(room, user).name, ordinary.username); assert.equal(roster(room, user).admin, false);
+        await command(room, user, {type:'modeVote', mode:'balanced'}); await command(room, user, {type:'settings', settings:{scoreLimit:9}}); assert.equal(room.room.settings.scoreLimit, 3);
+        env.db.prepare('UPDATE admin_credentials SET code_hash=? WHERE account_id=?').run('activated', ordinary.adminAccountId); env.db.prepare('DELETE FROM admin_bonk_links WHERE account_id=?').run(ordinary.adminAccountId);
+        await command(room, user, {type:'settings', settings:{scoreLimit:8}}); assert.equal(room.room.settings.scoreLimit, 3); assert.equal(roster(room, user).admin, false);
+        const mismatch = await member(env, 'Mismatch', {...ordinary, userSessionHash:activated.userSessionHash, adminAccountId:activated.adminAccountId}); assert.equal(roster(room, mismatch).admin, false);
+    } finally {cleanup(env);}
+});
+
+test('football privileges revoke on user expiry, link/account removal, deactivation and actual user logout', async () => {
+    for (const revoke of ['expiry', 'unlink', 'account', 'deactivate', 'logout']) {
+        const env = environment();
+        try {
+            const auth = await administrator(env), admin = await member(env, 'Admin', {...auth, adminSessionHash:undefined}), room = roomOf(env); assert.equal(roster(room, admin).admin, true);
+            if (revoke === 'expiry') env.db.prepare('UPDATE user_sessions SET expires_at=0 WHERE token_hash=?').run(auth.userSessionHash);
+            else if (revoke === 'unlink') env.db.prepare('DELETE FROM admin_bonk_links WHERE account_id=?').run(auth.adminAccountId);
+            else if (revoke === 'account') {env.db.prepare('DELETE FROM admin_sessions WHERE account_id=?').run(auth.adminAccountId); env.db.prepare('DELETE FROM admin_accounts WHERE id=?').run(auth.adminAccountId);}
+            else if (revoke === 'deactivate') env.db.prepare('UPDATE admin_credentials SET code_hash=NULL WHERE account_id=?').run(auth.adminAccountId);
+            else {
+                const response = await worker.fetch(new Request('https://api.test/api/bonk/logout', {method:'POST', headers:{Origin:origin, 'Content-Type':'application/json', 'X-Account-Session':auth.userToken}, body:'{}'}), env); assert.equal(response.status, 200);
+                assert.equal(env.db.prepare('SELECT COUNT(*) n FROM user_sessions WHERE token_hash=?').get(auth.userSessionHash).n, 0);
+            }
+            await command(room, admin, {type:'settings', settings:{scoreLimit:9}}); assert.equal(room.room.settings.scoreLimit, 3, revoke); assert.equal(roster(room, admin).admin, false, revoke);
+        } finally {cleanup(env);}
+    }
+});
+
+test('legacy football admin contexts remain compatible but an admin token never replaces the valid Bonk-session binding', async () => {
+    const env = environment();
+    try {
+        const auth = await administrator(env), admin = await member(env, 'Admin', auth), room = roomOf(env), own = roster(room, admin);
+        own.adminContext = {userSessionHash:auth.userSessionHash, adminSessionHash:'expired-old-token-hash', adminAccountId:auth.adminAccountId};
+        await command(room, admin, {type:'settings', settings:{scoreLimit:4}}); assert.equal(room.room.settings.scoreLimit, 4);
+        own.adminContext = {adminSessionHash:auth.adminSessionHash, adminAccountId:auth.adminAccountId}; await command(room, admin, {type:'settings', settings:{scoreLimit:5}}); assert.equal(room.room.settings.scoreLimit, 4); assert.equal(own.admin, false);
     } finally {cleanup(env);}
 });
