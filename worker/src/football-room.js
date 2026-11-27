@@ -32,6 +32,10 @@ export class FootballRoom {
             } else if (this.room.status === 'finished') {this.room.status = 'results'; this.room.results = {...this.room.lastResult, mode:'rockets', deadline:Date.now() + RESULTS_TTL};}
             let joinedAt = 0;
             for (const member of this.room.members) {member.preferredTeam = [0, 2, 3].includes(member.preferredTeam) ? member.preferredTeam : 0; if (!validViewportAspect(member.viewportAspect)) delete member.viewportAspect; member.joinedAt = Math.max(member.joinedAt || 0, joinedAt + 1); joinedAt = member.joinedAt; member.connected = false; member.ready = false; member.disconnectedAt = member.disconnectedAt || Date.now(); member.pendingUntil = 0;}
+            for (const member of this.room.members) {
+                if (![2, 3].includes(member.queueTeam)) member.queueTeam = [2, 3].includes(member.team) ? member.team : 0;
+                if (!member.team && !member.queueTeam) {member.queued = false; member.queueOrder = null;}
+            }
             if (this.room.rockets && ![2, 3].includes(this.room.rockets.attackerTeam)) this.room.rockets.attackerTeam = this.room.members.find(member => member.id === this.room.rockets.attackerId)?.team || 3;
             this.room.lastJoinedAt = Math.max(this.room.lastJoinedAt || 0, joinedAt);
             if (Date.now() - this.room.lastActive >= IDLE_TTL) {await this.clearIdle(); return;}
@@ -90,7 +94,7 @@ export class FootballRoom {
             if (!name) return json({error:'Enter a display name.'}, 400);
             const slot = Array.from({length:MAX_MEMBERS}, (_, i) => i).find(i => !this.room.members.some(item => item.slot === i));
             const joinedAt = Math.max(now, (this.room.lastJoinedAt || 0) + 1); this.room.lastJoinedAt = joinedAt;
-            member = {id:crypto.randomUUID(), slot, name, verified, bonkId:verified ? String(body.identity.bonkId) : null, admin:false, adminContext:null, team:0, preferredTeam:body.preferredTeam ?? 0, ready:false, queued:true, queueTeam:0, queueOrder:this.room.nextQueueOrder++, connected:false, disconnectedAt:now, pendingUntil:now + TICKET_TTL, joinedAt};
+            member = {id:crypto.randomUUID(), slot, name, verified, bonkId:verified ? String(body.identity.bonkId) : null, admin:false, adminContext:null, team:0, preferredTeam:body.preferredTeam ?? 0, ready:false, queued:false, queueTeam:0, queueOrder:null, connected:false, disconnectedAt:now, pendingUntil:now + TICKET_TTL, joinedAt};
             this.room.members.push(member);
         }
         const identity = body.identity;
@@ -179,7 +183,7 @@ export class FootballRoom {
             if (this.room.status === 'playing' && this.room.mode === 'rockets' && rockets?.attackerId === member.id && !rockets.turnEnded && !rockets.sideChangeUsed) {
                 const team = this.rocketAttackerTeam(member, rockets.turnIndex);
                 if (team !== rockets.attackerTeam) {rockets.attackerTeam = team; rockets.sideChangeUsed = true; this.setupRocketRoles();}
-            } else if (this.room.status === 'lobby') this.promoteQueue();
+            }
             await this.changed(); return;
         }
         if (message.type === 'modeVote') {
@@ -211,15 +215,19 @@ export class FootballRoom {
             this.room.lastActive = now; this.broadcast(chat); this.background(this.persist()); return;
         }
         if (message.type === 'leave') {this.removeMember(member.id, 'Left the lobby.'); await this.changed(); return;}
-        if (message.type === 'team' && (message.team === 2 || message.team === 3)) {
+        if ((message.type === 'team' || message.type === 'queue') && (message.team === 2 || message.team === 3)) {
+            if (this.room.mode !== 'rockets' && this.teamReservations(message.team, member.id) >= TEAM_SIZE) {this.send(connection.socket, {type:'notice', text:`${message.team === 3 ? 'Blue' : 'Red'} is full (4 players). Choose the other team or spectate.`}); return;}
             member.preferredTeam = message.team; member.queueTeam = message.team;
-            if (this.room.status === 'lobby') {this.setQueue(member, true, message.team); this.promoteQueue();}
+            if (this.room.status === 'lobby' || (this.room.status === 'voting' && !this.room.vote?.continuation && !this.room.transition)) {
+                if (member.team !== message.team) this.setQueue(member, true, message.team);
+                this.promoteQueue();
+            }
             else if (!member.team && !member.queued) this.setQueue(member, true, message.team);
             this.updateVoteEligibility(); await this.changed(); return;
         }
         if (['team', 'queue', 'spectate'].includes(message.type)) {
             const preference = message.type === 'spectate' ? 0 : message.team ?? 0;
-            if (![0, 2, 3].includes(preference)) {this.reject(connection, 'Choose Blue, Red, or any team.'); return;}
+            if (preference !== 0 || message.type === 'queue') {this.reject(connection, 'Choose Blue, Red, or spectate.'); return;}
             const wasActive = Boolean(member.team), inRockets = this.room.mode === 'rockets' && ['playing', 'results'].includes(this.room.status) && this.room.rockets?.participantIds.includes(member.id);
             this.setQueue(member, !(message.type === 'spectate' || (message.type === 'team' && preference === 0)), preference);
             if (inRockets) this.removeRocketParticipant(member.id);
@@ -243,10 +251,13 @@ export class FootballRoom {
             else this.room.pendingSettings = {...result.settings};
         } else if (message.type === 'assign') {
             const target = this.room.members.find(item => item.id === message.memberId);
-            if (this.room.status !== 'lobby' || !target || ![0, 2, 3].includes(message.team) || (message.team && this.room.members.filter(item => item.id !== target.id && item.team === message.team).length >= TEAM_SIZE)) {this.reject(connection, 'Choose a lobby player and a team with space.'); return;}
+            if (this.room.status !== 'lobby' || !target || ![0, 2, 3].includes(message.team) || (message.team && (this.room.mode === 'rockets'
+                ? this.room.members.filter(item => item.id !== target.id && item.team === message.team).length
+                : this.teamReservations(message.team, target.id)) >= TEAM_SIZE)) {this.reject(connection, 'Choose a lobby player and a team with space.'); return;}
             if (target.team && target.team !== message.team) this.playerLeaves.add(target.slot);
-            const changedTeam = target.team !== message.team;
-            target.team = message.team; target.queued = false; target.queueOrder = null; target.queueTeam = message.team; if (changedTeam) this.clearReadiness(); this.promoteQueue();
+            const changedTeam = target.team !== message.team || target.queued || target.queueTeam !== message.team;
+            target.team = message.team; target.queued = false; target.queueOrder = null; target.preferredTeam = message.team; target.queueTeam = message.team; if (changedTeam) this.clearReadiness(); this.updateVoteEligibility();
+            this.clearInput(target.slot);
         } else if (message.type === 'start' || message.type === 'rematch') {
             if (!this.canStart()) {this.reject(connection, 'A connected player can start after the mode vote.'); return;}
             this.startMatch();
@@ -269,15 +280,22 @@ export class FootballRoom {
         member.queued = queued; if (!queued) member.queueOrder = null;
         this.clearInput(member.slot); if (wasActive) this.clearReadiness();
     }
+    teamReservations(team, excludingId = null) {
+        return this.room.members.filter(member => member.id !== excludingId && (member.team || member.queued) && ([2, 3].includes(member.queueTeam) ? member.queueTeam : member.team) === team).length;
+    }
     promoteQueue(force = false) {
         if (!force && (['playing', 'results'].includes(this.room.status) || this.room.transition || (this.room.status === 'voting' && this.room.vote?.continuation))) return false;
-        const selection = balancedTeamAssignments(this.room.members, TEAM_SIZE), assignments = this.preferredAssignments(selection.assignments);
         let changed = false;
-        for (const member of this.room.members) {
-            const team = assignments.get(member.id) || 0;
-            if (member.team !== team) {if (member.team) this.playerLeaves.add(member.slot); changed = true;}
-            if (team) {member.team = team; member.queued = false; member.queueOrder = null;}
-            else if (member.team) {member.team = 0; member.queued = true; member.queueOrder = this.room.nextQueueOrder++;}
+        if (force) for (const member of this.room.members) if (member.team) {
+            if (![2, 3].includes(member.queueTeam)) member.queueTeam = member.team;
+            if (!member.connected || member.queueTeam !== member.team) {this.setQueue(member, true, member.queueTeam); changed = true;}
+        }
+        const counts = {2:this.room.members.filter(member => member.team === 2).length, 3:this.room.members.filter(member => member.team === 3).length};
+        const queue = this.room.members.filter(member => member.connected && member.queued).sort((a, b) => a.queueOrder - b.queueOrder || a.joinedAt - b.joinedAt);
+        for (const member of queue) {
+            const team = member.queueTeam;
+            if (![2, 3].includes(team) || counts[team] >= TEAM_SIZE) continue;
+            member.team = team; member.queued = false; member.queueOrder = null; counts[team]++; changed = true;
         }
         if (changed) this.clearReadiness(); return changed;
     }
@@ -298,7 +316,7 @@ export class FootballRoom {
     rebalanceActivePlayers() {
         const active = this.room.members.filter(member => member.team === 2 || member.team === 3);
         const selection = balancedTeamAssignments(active.map(member => ({...member, connected:true})), TEAM_SIZE), assignments = this.preferredAssignments(selection.assignments);
-        for (const member of active) {const team = assignments.get(member.id); if (team && team !== member.team) {this.playerLeaves.add(member.slot); member.team = team;}}
+        for (const member of active) {const team = assignments.get(member.id); if (team) {if (team !== member.team) this.playerLeaves.add(member.slot); member.team = team; member.queueTeam = team;}}
         this.clearReadiness();
     }
     matchSettings() {return validateMatchSettings({}, this.room.settings).settings;}
@@ -347,8 +365,9 @@ export class FootballRoom {
         this.enterLobby({mode});
     }
     enterLobby({mode = 'balanced', modeSelected = true} = {}) {
+        if (this.room.rockets) for (const member of this.room.members) if (member.team) this.setQueue(member, [2, 3].includes(member.queueTeam), member.queueTeam);
         this.stopTimer(); this.clearInput(); this.clearReadiness(); this.room.status = 'lobby'; this.room.mode = mode; this.room.modeSelected = modeSelected; this.room.vote = null; this.room.transition = null; this.room.results = null; this.room.rockets = null; this.room.rebalanceVote = null; this.room.winner = null; this.room.state = null;
-        this.promoteQueue();
+        this.promoteQueue(true);
     }
     completeTransition() {
         const transition = this.room.transition; if (!transition) return;
@@ -452,7 +471,7 @@ export class FootballRoom {
         if (this.room.mode === 'rockets' && ['playing', 'results'].includes(this.room.status) && this.room.rockets?.participantIds.includes(member.id)) {
             // Queue first: a retained resumable member must not leave a ghost
             // disc when the next attacker recreates the authoritative state.
-            this.setQueue(member, true, 0); this.removeRocketParticipant(member.id);
+            this.setQueue(member, true, member.queueTeam); this.removeRocketParticipant(member.id);
         } else if (member.team) this.clearReadiness();
         this.updateVoteEligibility();
         if (!this.canSimulate()) this.stopTimer();

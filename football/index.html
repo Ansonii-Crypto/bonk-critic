@@ -8,11 +8,11 @@
         <meta name="description" content="The shared football pitch on Bonk Critic.">
         <title>Football | Bonk Critic</title>
         <link rel="stylesheet" href="../account.css">
-        <link rel="stylesheet" href="./football.css?v=20261127-football-13">
+        <link rel="stylesheet" href="./football.css?v=20261127-football-16">
         <script src="../config.js"></script>
         <script src="../focus.js" defer></script>
         <script src="../skin-renderer.js" defer></script>
-        <script type="module" src="./client.js?v=20261127-football-15"></script>
+        <script type="module" src="./client.js?v=20261127-football-16"></script>
     </head>
     <body>
         <div id="footballApp" class="football-app">
@@ -110,7 +110,7 @@
                                             </section>
                                         </div>
                                         <div class="lobby-action-row">
-                                            <div class="lobby-status"><span id="lobbyStateLabel" class="section-note">LOBBY</span><span id="modeLabel" class="mode-label">Balanced teams</span></div>
+                                            <div class="lobby-status"><span id="lobbyStateLabel" class="section-note">LOBBY</span><span id="modeLabel" class="mode-label">Teams</span></div>
                                             <div class="ready-controls">
                                                 <button id="readyButton" type="button" class="button-primary" aria-pressed="false">Ready up</button>
                                                 <div id="adminMatchControls" class="admin-match-actions" role="group" aria-label="Admin match controls" hidden>
@@ -133,8 +133,8 @@
                                     <p id="overlayDescription" class="overlay-description">Vote for the mode you want to play next.</p>
                                     <section id="modeVotePanel" class="mode-vote-panel" aria-label="Vote for the next game mode">
                                         <button type="button" class="mode-vote-button" data-mode-vote="balanced" aria-pressed="false">
-                                            <span class="mode-vote-heading"><span class="mode-title">Balanced teams</span><span class="vote-tally"><span id="balancedVoteCount">0</span> votes</span></span>
-                                            <span class="mode-description">Teams scale from 1v1 to 4v4 with the lobby. Solo practice is welcome too.</span>
+                                            <span class="mode-vote-heading"><span class="mode-title">Teams</span><span class="vote-tally"><span id="balancedVoteCount">0</span> votes</span></span>
+                                            <span class="mode-description">Choose Blue or Red, with up to four players on each side.</span>
                                             <span class="mode-vote-action">Vote for teams <span aria-hidden="true">→</span></span>
                                         </button>
                                         <button type="button" class="mode-vote-button" data-mode-vote="rockets" aria-pressed="false">
@@ -145,6 +145,13 @@
                                     </section>
                                     <section id="resultsPanel" class="results-panel" aria-label="Game results" hidden><p id="resultsSummary" class="results-summary"></p><ol id="rocketLeaderboard" class="rocket-leaderboard" aria-label="Rockets leaderboard"></ol></section>
                                     <p id="votingWaiting" class="voting-waiting" role="status">Join football to vote for the next game.</p>
+                                    <div id="phaseTeamChoice" class="phase-team-choice" hidden>
+                                        <p id="phaseTeamChoiceHint">Choose a team for the next game.</p>
+                                        <div class="phase-team-actions" role="group" aria-label="Choose a team">
+                                            <button id="phaseJoinBlue" type="button" class="button-small phase-team-blue" data-team-choice="3">Join Blue</button>
+                                            <button id="phaseJoinRed" type="button" class="button-small phase-team-red" data-team-choice="2">Join Red</button>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
 

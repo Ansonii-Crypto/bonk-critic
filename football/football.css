@@ -2054,6 +2054,45 @@ kbd {
     line-height: 1.5;
 }
 
+.phase-team-choice {
+    margin-top: 16px;
+    padding-top: 14px;
+    border-top: 1px solid #c7c8b6;
+}
+
+#phaseTeamChoiceHint {
+    margin: 0 0 10px;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.phase-team-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.phase-team-actions button {
+    width: 100%;
+    min-width: 0;
+    min-height: 34px;
+    padding: 7px 10px;
+    font-size: 12px;
+}
+
+.phase-team-blue {
+    border-color: #365d87;
+    background: #497bac;
+    box-shadow: 0 2px 0 #365d87;
+}
+
+.phase-team-red {
+    border-color: #924744;
+    background: #b75954;
+    box-shadow: 0 2px 0 #924744;
+}
+
 @media (max-width: 620px) {
     #pitchWrap > #gameOverlay {
         padding: 10px;
@@ -3279,9 +3318,30 @@ kbd {
     .teams-card .roster-name {
         flex-basis: 40px;
     }
-    .teams-card .roster-identity,
-    .teams-card .roster-actions {
+    .teams-card .roster-identity {
         display: none;
+    }
+    .teams-card .roster-actions {
+        display: flex;
+        flex: 1 1 100%;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 3px;
+        margin: 3px 0 0;
+    }
+    .teams-card .roster-actions .team-assignment {
+        flex: 1 1 55px;
+        width: 100%;
+        min-width: 0;
+        max-width: 100%;
+        min-height: 24px;
+        padding: 2px;
+        font-size: 9px;
+    }
+    .teams-card .roster-actions .roster-remove {
+        min-height: 24px;
+        padding: 3px;
+        font-size: 8px;
     }
     .teams-card .ready-indicator {
         padding: 1px 3px;

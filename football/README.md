@@ -11,20 +11,21 @@ visible while the viewer reconnects.
 
 Choose Join game and sign in with a Bonk account if needed. Sign-in opens over
 the dimmed page without leaving football. Joining is verified by the server.
-A voting station on the pitch
-offers Balanced teams and Rockets. Each connected participant has one vote;
+New arrivals stay in Spectators until they choose Join Blue or Join Red.
+Remembered preferences do not select a team. The first player to choose a side
+opens a voting station on the pitch, offering Teams and Rockets.
+Each connected participant has one vote;
 spectators can watch. Voting lasts fifteen seconds, or ends sooner when every
-eligible player has voted. A tie selects Balanced teams.
+eligible player has voted. A tie selects Teams.
 
-Balanced teams keeps the sides as even as possible, with up to four players per
-side. A single player can start a practice game. New arrivals remain in
-Spectators until the next game, including across goals and rebalances. Lobby assignments keep team sizes
-within one player while moving as few existing players as possible. Players
-can opt out and spectate. Each team has a Join button underneath its players;
-Spectate opts out of the next game. Blue, Red and Spectators share a compact
-three-column row at the top of the pitch. There are no separate lobby side
-preference buttons. Joining a team saves that preference while keeping the
-teams balanced.
+Teams supports up to four players per side, including solo practice. Players
+choose their own side, and administrator assignments stay on the selected side.
+A full side rejects the request instead of moving the player to the other side.
+Games may start with uneven sides. A side chosen during a match takes effect
+in the next game, including across goals and rebalances; players who have not
+chosen a side keep spectating. Spectate opts out. Blue, Red and Spectators share
+a compact three-column row, with Join buttons underneath each team. End screens
+also offer Blue and Red buttons so spectators can opt into the next game.
 
 Choosing a team in the lobby only changes the roster. Players spawn and can
 move when the game starts; the server ignores movement and kicks beforehand.
@@ -37,27 +38,30 @@ when the lobby roster or match settings change. Ready and the administrator's
 Start button sit together below the team lists. Site administrators can also
 end a game.
 
-If a Balanced teams player leaves, a fifteen-second Yes/No vote asks the
+If a Teams player leaves, a fifteen-second Yes/No vote asks the
 remaining participants whether to rebalance. A majority voting Yes starts a
 fresh kickoff with even teams and preserves the score. No, a tie, or timeout
 continues with the current assignments for the rest of that game. Rebalancing
 only moves players already on the pitch; waiting spectators enter the next game.
 
-After a Balanced teams match, a separate screen over the dimmed pitch shows
+After a Teams match, a separate screen over the dimmed pitch shows
 the final score and a vote for the next game. When voting ends, this screen
 fades out and the selected game starts automatically, without returning to
 the lobby or requiring another Ready check. New arrivals enter at this next
 game boundary. The server owns phase deadlines and voting eligibility.
 
 Rockets finishes with its fastest-goal leaderboard on a separate screen for
-ten seconds. It then fades out into the Balanced teams lobby, where players
+ten seconds. It then fades out into the Teams lobby, where players
 can choose teams and ready up again. The lobby team lists stay hidden during both
 end screens. Both transitions use a 350-millisecond fade.
 
 ## Rockets
 
 Every participant gets one attacking turn in server-recorded join order. The
-attacker chooses Blue, Red or Random. Only that attacker is on the pitch;
+Rockets roster contains only players who opted in, and can include up to 64.
+After Rockets, participants return to their chosen side, with any places beyond
+four per side waiting in its queue. The attacker chooses Blue, Red or Random.
+Only that attacker is on the pitch;
 everyone else watches. Random alternates shooting sides in join order. Other
 participants wait for their turns; new arrivals enter the next game. Each turn
 allows thirty seconds of active play, excluding kickoff and goal celebration.

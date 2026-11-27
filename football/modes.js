@@ -3,8 +3,8 @@ export const ROCKET_TURN_TICKS = 900;
 export const FOOTBALL_MODES = Object.freeze({
     balanced: Object.freeze({
         id: 'balanced',
-        label: 'Balanced football',
-        description: 'Balanced teams with up to four players on each side.',
+        label: 'Teams',
+        description: 'Choose Blue or Red, with up to four players on each side.',
         maxPerTeam: 4,
         maxPlayers: 8,
     }),

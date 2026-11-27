@@ -67,8 +67,12 @@ async function watch(env) {
     const response = await request(env, '/watch', undefined, null, {Upgrade:'websocket'}); assert.equal(response.status, 101);
     const room = roomOf(env), connection = [...room.watchers.values()].at(-1); return {socket:response.webSocket, connection};
 }
-async function member(env, name, identity = null, {vote = true} = {}) {
+async function member(env, name, identity = null, {vote = true, optIn = true, team} = {}) {
     const {response, data} = await join(env, name, {identity:identity || undefined}); assert.equal(response.status, 200); const socket = await connect(env, data), result = {...data, socket};
+    if (optIn) {
+        const room = roomOf(env), blue = room.teamReservations(3), red = room.teamReservations(2);
+        if (team || room.room.mode === 'rockets' || Math.min(blue, red) < 4) await command(room, result, {type:'team', team:team || (blue <= red ? 3 : 2)});
+    }
     if (vote && roomOf(env).room.status === 'voting') await command(roomOf(env), result, {type:'modeVote', mode:'balanced'});
     return result;
 }
@@ -154,27 +158,32 @@ test('settings validate atomically, reset lobby readiness, and queue during play
     } finally {cleanup(env);}
 });
 
-test('64 member capacity allows only four active players per side and FIFO queue positions', async () => {
+test('64 member capacity retains unselected spectators without automatically filling team vacancies', async () => {
     const env = environment();
     try {
         const people = []; for (let i = 0; i < LIMITS.MAX_MEMBERS; i++) people.push(await member(env, 'Player ' + i));
         const room = roomOf(env), view = room.publicRoom(); assert.equal(room.room.members.length, 64);
         assert.equal(view.members.filter(item => item.team === 2).length, 4); assert.equal(view.members.filter(item => item.team === 3).length, 4);
-        assert.deepEqual(view.members.filter(item => item.queued).map(item => item.queuePosition), Array.from({length:56}, (_, i) => i + 1));
+        assert.equal(view.members.filter(item => !item.team && !item.queued).length, 56);
+        assert.equal(view.members.filter(item => item.queued).length, 0);
         assert.equal((await join(env, 'Overflow')).response.status, 409);
-        await command(room, people[0], {type:'spectate'}); assert.equal(roster(room, people[0]).queuePosition, undefined); assert.equal(roster(room, people[8]).team, 3);
+        await command(room, people[0], {type:'spectate'}); assert.equal(roster(room, people[0]).queuePosition, undefined); assert.equal(roster(room, people[8]).team, 0);
+        await command(room, people[8], {type:'team', team:3}); assert.equal(roster(room, people[8]).team, 3);
         assert.equal(room.publicRoom().members.find(item => item.id === people[0].member.id).queuePosition, null);
     } finally {cleanup(env);}
 });
 
-test('balanced mode preserves a fair queue and keeps sides within one player after opt-out', async () => {
+test('a full selected side rejects the choice without moving the player to an available opposite side', async () => {
     const env = environment();
     try {
         const people = []; for (let i = 0; i < 10; i++) people.push(await member(env, 'P' + i)); const room = roomOf(env);
         await command(room, people[8], {type:'queue', team:3}); await command(room, people[9], {type:'queue', team:2});
-        await command(room, people[0], {type:'spectate'}); assert.ok(roster(room, people[8]).team); assert.equal(roster(room, people[9]).queued, true);
-        await command(room, people[1], {type:'spectate'}); assert.ok(roster(room, people[9]).team);
-        assert.ok(Math.abs(room.room.members.filter(item => item.team === 2).length - room.room.members.filter(item => item.team === 3).length) <= 1);
+        assert.equal(roster(room, people[8]).queued, false); assert.equal(roster(room, people[9]).queued, false);
+        await command(room, people[0], {type:'spectate'}); assert.equal(roster(room, people[8]).team, 0);
+        await command(room, people[8], {type:'team', team:2}); assert.equal(roster(room, people[8]).team, 0); assert.match(people[8].socket.received.at(-1).text, /Red is full/);
+        await command(room, people[8], {type:'team', team:3}); assert.equal(roster(room, people[8]).team, 3);
+        await command(room, people[1], {type:'spectate'}); assert.equal(roster(room, people[9]).team, 0);
+        await command(room, people[9], {type:'team', team:2}); assert.equal(roster(room, people[9]).team, 2);
     } finally {cleanup(env);}
 });
 
@@ -393,7 +402,7 @@ test('empty votes stop and a watcher joining the queue opens a fresh initial vot
     try {
         const solo = await member(env, 'Solo', null, {vote:false}), room = roomOf(env);
         await command(room, solo, {type:'spectate'}); assert.equal(room.room.status, 'lobby'); assert.equal(room.room.vote, null);
-        await command(room, solo, {type:'queue', team:0}); assert.equal(room.room.status, 'voting'); assert.ok(room.room.vote.deadline > Date.now());
+        await command(room, solo, {type:'queue', team:2}); assert.equal(room.room.status, 'voting'); assert.ok(room.room.vote.deadline > Date.now());
     } finally {cleanup(env);}
 });
 
@@ -462,6 +471,7 @@ test('Rockets queued participants must ready up and are listed in the public fix
     try {
         const people = []; for (let i = 0; i < 10; i++) people.push(await member(env, 'Rocket ' + i, null, {vote:false})); const room = roomOf(env);
         for (const data of people) await command(room, data, {type:'modeVote', mode:'rockets'});
+        for (const data of people.slice(8)) await command(room, data, {type:'team', team:3});
         for (const data of people.slice(0, 9)) await command(room, data, {type:'ready', ready:true});
         assert.equal(room.room.status, 'lobby'); assert.equal(roster(room, people[9]).queued, true);
         await command(room, people[9], {type:'ready', ready:true}); room.stopTimer(); assert.equal(room.room.status, 'playing');
@@ -477,7 +487,7 @@ test('Rockets red goals do not announce a shot; role changes skip the attacker a
         assert.equal(room.room.state.lscr, 2); assert.equal(members[0].socket.received.filter(item => item.system).length, 0);
         for (let frame = 0; frame < 91; frame++) room.tick(); assert.equal(room.room.rockets.attackerId, members[1].member.id); assert.equal(room.publicRoom().rockets.leaderboard.find(row => row.id === members[0].member.id).scored, false);
         await command(room, members[1], {type:'spectate'}); assert.equal(room.room.rockets.attackerId, members[2].member.id); assert.equal(room.room.rockets.totalTurns, 2); assert.equal(roster(room, members[1]).queued, false); assert.equal(room.publicRoom().rockets.leaderboard.some(row => row.id === members[1].member.id), false);
-        await command(room, members[0], {type:'queue', team:0}); assert.equal(room.room.rockets.participantIds.includes(members[0].member.id), false); assert.equal(roster(room, members[0]).queued, true); assert.equal(room.publicRoom().rockets.leaderboard.length, 1);
+        await command(room, members[0], {type:'spectate'}); await command(room, members[0], {type:'queue', team:2}); assert.equal(room.room.rockets.participantIds.includes(members[0].member.id), false); assert.equal(roster(room, members[0]).queued, true); assert.equal(room.publicRoom().rockets.leaderboard.length, 1);
         await command(room, members[2], {type:'leave'}); assert.notEqual(room.room.status, 'playing'); assert.equal(room.room.rockets, null);
     } finally {cleanup(env);}
 });
@@ -818,16 +828,17 @@ test('chat is delivered only live to joined members and never stored, replayed o
     } finally {cleanup(env);}
 });
 
-test('join preferences are whitelisted before the first assignment and balanced mode honors feasible requests', async () => {
+test('cached join preferences never select a team and only explicit side choices change lobby assignments', async () => {
     const env = environment();
     try {
         const red = (await join(env, 'Red', {extra:{preferredTeam:2}})).data; await connect(env, red); const room = roomOf(env);
-        assert.equal(roster(room, red).preferredTeam, 2); assert.equal(roster(room, red).team, 2);
-        const blue = (await join(env, 'Blue', {extra:{preferredTeam:3}})).data; await connect(env, blue); assert.equal(roster(room, blue).team, 3);
+        assert.equal(roster(room, red).preferredTeam, 2); assert.equal(roster(room, red).team, 0); assert.equal(roster(room, red).queued, false); assert.equal(room.room.status, 'lobby');
+        const blue = (await join(env, 'Blue', {extra:{preferredTeam:3}})).data; await connect(env, blue); assert.equal(roster(room, blue).team, 0); assert.equal(roster(room, blue).queued, false);
         assert.equal((await join(env, 'Invalid', {extra:{preferredTeam:4}})).response.status, 400); assert.equal((await join(env, 'Invalid', {extra:{preferredTeam:'3'}})).response.status, 400); assert.equal(room.room.members.length, 2);
+        await command(room, red, {type:'team', team:2}); await command(room, blue, {type:'team', team:3});
         await command(room, red, {type:'modeVote', mode:'balanced'}); await command(room, blue, {type:'modeVote', mode:'balanced'});
         await command(room, red, {type:'preference', team:3}); await command(room, blue, {type:'preference', team:2});
-        assert.equal(roster(room, red).team, 3); assert.equal(roster(room, blue).team, 2); assert.equal(roster(room, red).queueTeam, 0); assert.equal(roster(room, red).queued, false);
+        assert.equal(roster(room, red).team, 2); assert.equal(roster(room, blue).team, 3); assert.equal(roster(room, red).queueTeam, 2); assert.equal(roster(room, red).queued, false);
         assert.equal(room.publicRoom().members.find(member => member.id === red.member.id).preferredTeam, 3);
     } finally {cleanup(env);}
 });
@@ -869,7 +880,7 @@ test('offline lobby seats excluded from a Rockets start cannot leave active ghos
     } finally {cleanup(env);}
 });
 
-test('regular team commands request balanced lobby places, retain preference on opt-out, and queue spectators for the next game', async () => {
+test('regular team commands select exact lobby sides, retain preference on opt-out, and queue spectators for the next game', async () => {
     const env = environment();
     try {
         const first = await member(env, 'First'), second = await member(env, 'Second'), room = roomOf(env);
@@ -893,16 +904,17 @@ test('waiting Rockets team requests preserve participant order and never create 
     } finally {cleanup(env);}
 });
 
-test('pre-existing and newly joined queues cannot fill a vacancy during goals or rebalance', async () => {
+test('explicit next-game choices wait through goals and rebalances while unselected spectators remain opted out', async () => {
     const env = environment();
     try {
         const people = []; for (let i = 0; i < 9; i++) people.push(await member(env, 'Player ' + i)); const room = roomOf(env);
         for (const data of people.slice(0, 8)) await command(room, data, {type:'ready', ready:true}); room.stopTimer(); assert.equal(room.room.status, 'playing');
         const late = await member(env, 'Late'); await command(room, people[0], {type:'leave'});
+        await command(room, people[8], {type:'team', team:3});
         for (const data of [...people.slice(1), late]) await command(room, data, {type:'rebalanceVote', yes:true});
         assert.equal(room.room.rebalanceVote, null); assert.equal(room.room.state.discs.filter(Boolean).length, 7);
         assert.equal(roster(room, people[8]).team, 0); assert.equal(roster(room, late).team, 0); assert.equal(room.promoteQueue(), false);
-        room.room.state.fte = 0; room.room.state.scores[2] = 1; room.tick(); assert.equal(room.room.state.discs.filter(Boolean).length, 7); assert.equal(roster(room, people[8]).queued, true); assert.equal(roster(room, late).queued, true);
+        room.room.state.fte = 0; room.room.state.scores[2] = 1; room.tick(); assert.equal(room.room.state.discs.filter(Boolean).length, 7); assert.equal(roster(room, people[8]).queued, true); assert.equal(roster(room, late).queued, false);
     } finally {cleanup(env);}
 });
 
@@ -1154,4 +1166,99 @@ test('legacy football admin contexts remain compatible but an admin token never 
         await command(room, admin, {type:'settings', settings:{scoreLimit:4}}); assert.equal(room.room.settings.scoreLimit, 4);
         own.adminContext = {adminSessionHash:auth.adminSessionHash, adminAccountId:auth.adminAccountId}; await command(room, admin, {type:'settings', settings:{scoreLimit:5}}); assert.equal(room.room.settings.scoreLimit, 4); assert.equal(own.admin, false);
     } finally {cleanup(env);}
+});
+
+test('admin Red assignments override earlier Blue choices and survive joins, Start, Abort and resume', async () => {
+    const env = environment();
+    try {
+        const admin = await member(env, 'Admin', await administrator(env)), player = await member(env, 'Player'), room = roomOf(env);
+        await command(room, player, {type:'team', team:3}); assert.equal(roster(room, player).team, 3);
+        await command(room, admin, {type:'assign', memberId:player.member.id, team:2});
+        assert.equal(roster(room, player).team, 2); assert.equal(roster(room, player).preferredTeam, 2); assert.equal(roster(room, player).queueTeam, 2);
+        const watcher = await member(env, 'Watcher', null, {optIn:false}); assert.equal(roster(room, watcher).team, 0); assert.equal(roster(room, player).team, 2);
+        await command(room, admin, {type:'start'}); room.stopTimer(); assert.equal(room.room.state.discs[roster(room, player).slot].team, 2); assert.equal(room.room.state.discs[roster(room, watcher).slot] || null, null);
+        await command(room, admin, {type:'abort'}); assert.equal(roster(room, player).team, 2);
+        const resumed = (await join(env, 'Ignored', {extra:{resumeToken:player.member.resumeToken}})).data; await connect(env, resumed);
+        assert.equal(roster(room, resumed).team, 2); assert.equal(roster(room, resumed).queueTeam, 2);
+    } finally {cleanup(env);}
+});
+
+test('admin assignment rejects a full requested side instead of assigning the opposite empty side', async () => {
+    const env = environment();
+    try {
+        const admin = await member(env, 'Admin', await administrator(env), {optIn:false}), reds = [];
+        for (let i = 0; i < 4; i++) reds.push(await member(env, 'Red ' + i, null, {team:2}));
+        const watcher = await member(env, 'Watcher', null, {optIn:false}), room = roomOf(env);
+        await command(room, admin, {type:'assign', memberId:watcher.member.id, team:2});
+        assert.equal(roster(room, watcher).team, 0); assert.equal(roster(room, watcher).queued, false);
+        assert.ok(reds.every(data => roster(room, data).team === 2)); assert.equal(room.room.members.some(item => item.team === 3), false);
+        await command(room, admin, {type:'assign', memberId:watcher.member.id, team:3}); assert.equal(roster(room, watcher).team, 3);
+    } finally {cleanup(env);}
+});
+
+test('spectators explicitly join during initial and continuation votes while untouched watchers never enter', async () => {
+    const env = environment();
+    try {
+        const first = await member(env, 'First', null, {vote:false}), second = await member(env, 'Second', null, {optIn:false}), watcher = await member(env, 'Watcher', null, {optIn:false}), room = roomOf(env);
+        await command(room, second, {type:'modeVote', mode:'balanced'}); assert.equal(room.publicRoom().vote.eligibleCount, 1);
+        await command(room, second, {type:'team', team:2}); assert.equal(room.publicRoom().vote.eligibleCount, 2);
+        for (const data of [first, second]) await command(room, data, {type:'modeVote', mode:'balanced'});
+        await command(room, first, {type:'ready', ready:true}); await command(room, second, {type:'ready', ready:true}); room.stopTimer();
+        assert.equal(room.room.status, 'playing'); assert.equal(room.room.state.discs.filter(Boolean).length, 2); assert.equal(roster(room, watcher).queued, false);
+        room.finishGame(3); room.stopTimer(); const arrival = await member(env, 'Arrival', null, {optIn:false});
+        await command(room, arrival, {type:'team', team:3}); assert.equal(roster(room, arrival).team, 0); assert.equal(roster(room, arrival).queued, true);
+        for (const data of [first, second, arrival]) await command(room, data, {type:'modeVote', mode:'balanced'});
+        await finishTransition(room); assert.equal(roster(room, arrival).team, 3); assert.equal(roster(room, first).team, 3); assert.equal(roster(room, second).team, 2);
+        assert.equal(roster(room, watcher).team, 0); assert.equal(roster(room, watcher).queued, false); assert.equal(room.room.state.discs[roster(room, watcher).slot] || null, null);
+    } finally {cleanup(env);}
+});
+
+test('in-game side choices preserve the current match and apply exactly at the next game without balancing', async () => {
+    const env = environment();
+    try {
+        const {room, members} = await match(env, 3);
+        for (const data of [members[0], members[2]]) await command(room, data, {type:'team', team:2});
+        assert.equal(roster(room, members[0]).team, 3); assert.equal(roster(room, members[2]).team, 3);
+        assert.equal(room.room.state.discs[roster(room, members[0]).slot].team, 3);
+        room.finishGame(3); room.stopTimer(); for (const data of members) await command(room, data, {type:'modeVote', mode:'balanced'});
+        await finishTransition(room); assert.ok(members.every(data => roster(room, data).team === 2)); assert.equal(room.room.state.discs.filter(Boolean).length, 3);
+        assert.ok(room.room.state.discs.filter(Boolean).every(disc => disc.team === 2));
+    } finally {cleanup(env);}
+});
+
+test('Rockets accepts 64 explicitly chosen players and returns overflow to its chosen-side queue', async () => {
+    const env = environment();
+    try {
+        const first = await member(env, 'Rocket 0', null, {vote:false}), room = roomOf(env);
+        await command(room, first, {type:'modeVote', mode:'rockets'}); const people = [first];
+        for (let i = 1; i < 64; i++) people.push(await member(env, 'Rocket ' + i));
+        const choices = new Map(room.room.members.map(item => [item.id, item.queueTeam]));
+        for (const data of people) await command(room, data, {type:'ready', ready:true}); room.stopTimer();
+        assert.equal(room.room.status, 'playing'); assert.equal(room.room.rockets.participantIds.length, 64); assert.equal(room.room.state.discs.filter(Boolean).length, 1);
+        room.finishGame(null); room.stopTimer(); room.room.results.deadline = Date.now() - 1; await room.alarm(); await finishTransition(room);
+        assert.equal(room.room.mode, 'balanced'); assert.equal(room.room.members.filter(item => item.team === 2).length, 4); assert.equal(room.room.members.filter(item => item.team === 3).length, 4);
+        assert.equal(room.room.members.filter(item => item.queued).length, 56);
+        for (const item of room.room.members) {assert.equal(item.queueTeam, choices.get(item.id)); if (item.team) assert.equal(item.team, item.queueTeam);}
+    } finally {cleanup(env);}
+});
+
+test('the last player leaving cannot pull an unselected spectator into the next lobby', async () => {
+    const env = environment();
+    try {
+        const {room, members} = await match(env, 1), watcher = await member(env, 'Watcher', null, {optIn:false});
+        await command(room, members[0], {type:'leave'});
+        assert.equal(room.room.status, 'lobby'); assert.equal(room.room.state, null); assert.equal(room.canStart(), false);
+        assert.equal(roster(room, watcher).team, 0); assert.equal(roster(room, watcher).queued, false);
+    } finally {cleanup(env);}
+});
+
+test('old automatic queues without a selected side restore as spectators', async () => {
+    const env = environment(); let restored;
+    try {
+        const first = await member(env, 'First'), watcher = await member(env, 'Watcher', null, {optIn:false}), room = roomOf(env);
+        Object.assign(roster(room, watcher), {queued:true, queueTeam:0, queueOrder:10}); await room.persist();
+        restored = new FootballRoom(context(room.ctx.storage), env); await restored.ready; env.objects.set(ID, restored);
+        assert.equal(roster(restored, watcher).team, 0); assert.equal(roster(restored, watcher).queued, false); assert.equal(roster(restored, watcher).queueOrder, null);
+        assert.equal(roster(restored, first).queueTeam, 3);
+    } finally {restored?.stopTimer(); cleanup(env);}
 });
