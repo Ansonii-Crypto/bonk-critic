@@ -1,6 +1,6 @@
 import {FootballPhysics, createState} from '../../football/physics.js';
 import {DEFAULT_MATCH_SETTINGS, validateMatchSettings} from '../../football/settings.js';
-import {ROCKET_TURN_TICKS, goalSpeed, balancedTeamAssignments, rocketsRoster, rocketsLeaderboard} from '../../football/modes.js';
+import {ROCKET_TURN_TICKS, ballSpeed, goalSpeed, scoringShotSpeed, balancedTeamAssignments, rocketsRoster, rocketsLeaderboard} from '../../football/modes.js';
 import {FOOTBALL_HUB_ID} from './football-api.js';
 
 const TICKET_TTL = 30_000, RESUME_GRACE = 15_000, HEARTBEAT_TTL = 15_000, IDLE_TTL = 30 * 60_000;
@@ -12,6 +12,13 @@ const randomToken = () => crypto.randomUUID().replaceAll('-', '') + crypto.rando
 const json = (data, status = 200) => new Response(JSON.stringify(data), {status, headers:{'Content-Type':'application/json', 'Cache-Control':'no-store'}});
 const cleanName = (value, length) => typeof value === 'string' ? value.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, length) : '';
 const validViewportAspect = value => typeof value === 'number' && Number.isFinite(value) && value >= .125 && value <= 8;
+function validSpeedHistory(value) {
+    if (!Array.isArray(value)) return [];
+    const history = value.slice(-ROCKET_TURN_TICKS - 1);
+    let start = history.length;
+    while (start && typeof history[start - 1] === 'number' && Number.isFinite(history[start - 1]) && history[start - 1] >= 0) start--;
+    return history.slice(start);
+}
 async function digest(token) {return [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token)))].map(byte => byte.toString(16).padStart(2, '0')).join('');}
 const privileged = new Set(['assign', 'settings', 'start', 'rematch', 'abort', 'kick']);
 
@@ -37,6 +44,7 @@ export class FootballRoom {
                 if (!member.team && !member.queueTeam) {member.queued = false; member.queueOrder = null;}
             }
             if (this.room.rockets && ![2, 3].includes(this.room.rockets.attackerTeam)) this.room.rockets.attackerTeam = this.room.members.find(member => member.id === this.room.rockets.attackerId)?.team || 3;
+            if (this.room.rockets) this.room.rockets.speedHistory = validSpeedHistory(this.room.rockets.speedHistory);
             this.room.lastJoinedAt = Math.max(this.room.lastJoinedAt || 0, joinedAt);
             if (Date.now() - this.room.lastActive >= IDLE_TTL) {await this.clearIdle(); return;}
             if (this.room.status === 'lobby') this.room.state = null;
@@ -330,7 +338,7 @@ export class FootballRoom {
         this.stopTimer(); this.applyPendingSettings(); this.promoteQueue(true); this.clearInput(); this.playerLeaves.clear(); this.tickNumber = 0; this.clearReadiness(); this.room.status = 'playing'; this.room.balanceDeferred = false; this.room.winner = null; this.room.vote = null; this.room.transition = null; this.room.results = null; this.room.rebalanceVote = null;
         if (this.room.mode === 'rockets') {
             const participants = rocketsRoster(this.room.members);
-            this.room.rockets = {participantIds:participants.map(member => member.id), records:{}, completedIds:[], attackerId:null, turnTicksLeft:ROCKET_TURN_TICKS, turnIndex:0, totalTurns:participants.length, turnEnded:false};
+            this.room.rockets = {participantIds:participants.map(member => member.id), records:{}, completedIds:[], attackerId:null, turnTicksLeft:ROCKET_TURN_TICKS, turnIndex:0, totalTurns:participants.length, turnEnded:false, speedHistory:[]};
             this.startRocketTurn();
         } else {this.room.rockets = null; this.room.state = createState(this.activePlayers(), {settings:this.matchSettings()});}
         this.ensureTimer();
@@ -430,7 +438,17 @@ export class FootballRoom {
             member.queued = !member.team; if (member.queued && !member.queueOrder) member.queueOrder = this.room.nextQueueOrder++;
             if (!member.queued) member.queueOrder = null;
         }
+        rockets.speedHistory = [];
         this.clearInput(); this.playerLeaves.clear(); this.room.state = createState(this.activePlayers(), {settings:this.matchSettings()});
+    }
+    sampleRocketSpeed(state, initial = false) {
+        const rockets = this.room.rockets;
+        if (!Array.isArray(rockets.speedHistory)) rockets.speedHistory = [];
+        if (initial && rockets.speedHistory.length) return;
+        const speed = ballSpeed(state);
+        if (!Number.isFinite(speed) || speed < 0) {rockets.speedHistory = []; return;}
+        rockets.speedHistory.push(speed);
+        if (rockets.speedHistory.length > ROCKET_TURN_TICKS + 1) rockets.speedHistory.splice(0, rockets.speedHistory.length - ROCKET_TURN_TICKS - 1);
     }
     completeRocketTurn() {
         const rockets = this.room.rockets; if (!rockets) return;
@@ -566,17 +584,21 @@ export class FootballRoom {
                 this.finishGame(winner); return;
             }
             this.room.state = createState(this.activePlayers(), {settings:this.matchSettings()}); this.room.state.scores = state.scores.slice(); this.playerLeaves.clear(); this.clearInput();
+            if (this.room.mode === 'rockets' && this.room.rockets) this.room.rockets.speedHistory = [];
         } else {
             const controls = this.physicsControls(state);
+            if (this.room.mode === 'rockets' && this.room.rockets && !this.room.rockets.turnEnded && state.ftu === -1 && state.fte === -1) this.sampleRocketSpeed(state, true);
             try {this.room.state = this.physics.step(state, controls, {playersLeft:[...this.playerLeaves]}); this.playerLeaves.clear();}
             catch {this.abort('The match stopped. Players can ready up again.'); this.broadcastRoom(); this.background(this.persist()); return;}
         }
         if (this.room.mode === 'rockets' && this.room.rockets && !this.room.rockets.turnEnded && state.ftu === -1 && state.fte === -1) {
             const rockets = this.room.rockets; rockets.turnTicksLeft = Math.max(0, rockets.turnTicksLeft - 1);
-            const speed = goalSpeed(state, this.room.state);
-            if (speed !== null) {
+            this.sampleRocketSpeed(this.room.state);
+            const crossingSpeed = goalSpeed(state, this.room.state);
+            if (crossingSpeed !== null) {
                 rockets.turnEnded = true;
                 if (this.room.state.lscr === rockets.attackerTeam) {
+                    const speed = scoringShotSpeed(rockets.speedHistory) ?? crossingSpeed;
                     rockets.records[rockets.attackerId] = {scored:true, speed, timeTicks:ROCKET_TURN_TICKS - rockets.turnTicksLeft};
                     const attacker = this.room.members.find(member => member.id === rockets.attackerId); if (attacker) this.systemChat(`${attacker.name} reached ${speed.toFixed(1)} m/s.`);
                 }

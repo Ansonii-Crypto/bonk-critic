@@ -442,8 +442,8 @@ test('solo Rockets excludes countdown from its 900 active ticks and records nati
         for (let frame = 0; frame < 121; frame++) room.tick(); assert.equal(room.room.state.ftu, -1); assert.equal(room.room.rockets.turnTicksLeft, 900);
         room.room.state.ball.x = 701 / 11; room.room.state.ball.xv = 20; room.tick();
         assert.equal(room.room.rockets.turnTicksLeft, 899); assert.equal(room.room.state.fte, 90); assert.equal(room.room.rockets.turnEnded, true);
-        const board = room.publicRoom().rockets.leaderboard; assert.equal(board[0].scored, true); assert.ok(Math.abs(board[0].speed - 19.6) < .000001); assert.equal(room.publicRoom().rockets.unit, 'm/s');
-        assert.equal(members[0].socket.received.filter(item => item.system).length, 1); assert.equal(members[0].socket.received.filter(item => item.system).at(-1).text, 'Rocket 0 reached 19.6 m/s.');
+        const board = room.publicRoom().rockets.leaderboard; assert.equal(board[0].scored, true); assert.ok(Math.abs(board[0].speed - 20) < .000001); assert.equal(room.publicRoom().rockets.unit, 'm/s');
+        assert.equal(members[0].socket.received.filter(item => item.system).length, 1); assert.equal(members[0].socket.received.filter(item => item.system).at(-1).text, 'Rocket 0 reached 20.0 m/s.');
         for (let frame = 0; frame < 90; frame++) room.tick(); assert.equal(room.room.rockets.turnTicksLeft, 899); room.tick();
         assert.equal(room.room.status, 'results'); assert.equal(room.room.results.winnerId, members[0].member.id); assert.equal(room.room.results.unit, 'm/s'); assert.equal(members[0].socket.received.filter(item => item.system).length, 1);
     } finally {cleanup(env);}
@@ -1166,6 +1166,99 @@ test('legacy football admin contexts remain compatible but an admin token never 
         await command(room, admin, {type:'settings', settings:{scoreLimit:4}}); assert.equal(room.room.settings.scoreLimit, 4);
         own.adminContext = {adminSessionHash:auth.adminSessionHash, adminAccountId:auth.adminAccountId}; await command(room, admin, {type:'settings', settings:{scoreLimit:5}}); assert.equal(room.room.settings.scoreLimit, 4); assert.equal(own.admin, false);
     } finally {cleanup(env);}
+});
+
+test('Rockets records the native scoring kick peak rather than its decayed goal crossing speed, with active-only private samples', async () => {
+    const env = environment();
+    try {
+        const {room, members} = await rocketsMatch(env, 1), attacker = members[0], slot = roster(room, attacker).slot;
+        for (let frame = 0; frame < 121; frame++) room.tick();
+        assert.deepEqual(room.room.rockets.speedHistory, []); assert.equal(room.room.rockets.turnTicksLeft, 900);
+        Object.assign(room.room.state.discs[slot], {x:58, y:250 / 11, xv:0, yv:0});
+        Object.assign(room.room.state.ball, {x:60.1, y:250 / 11, xv:0, yv:0});
+        await command(room, attacker, {type:'input', seq:1, flags:16}); await command(room, attacker, {type:'input', seq:2, flags:0}); room.tick();
+        const peak = Math.hypot(room.room.state.ball.xv, room.room.state.ball.yv); assert.ok(Math.abs(peak - 24.5) < 1e-9);
+        assert.deepEqual(room.room.rockets.speedHistory, [0, peak]);
+        for (let frame = 0; frame < 60 && !room.room.rockets.turnEnded; frame++) room.tick();
+        assert.equal(room.room.state.lscr, 3); assert.equal(room.room.state.fte, 90); assert.equal(room.room.rockets.records[attacker.member.id].speed, peak);
+        const history = [...room.room.rockets.speedHistory]; assert.ok(history.at(-1) < peak); assert.equal(history.length, 901 - room.room.rockets.turnTicksLeft);
+        assert.equal(attacker.socket.received.filter(message => message.system).at(-1).text, 'Rocket 0 reached 24.5 m/s.');
+        assert.equal(JSON.stringify(room.publicRoom()).includes('speedHistory'), false); assert.equal(JSON.stringify(attacker.socket.received).includes('speedHistory'), false);
+        for (let frame = 0; frame < 94; frame++) room.tick();
+        assert.equal(room.room.status, 'results'); assert.deepEqual(room.room.rockets.speedHistory, history, 'celebration and result coast do not enter the shot history');
+        assert.equal(room.room.results.leaderboard[0].speed, peak);
+    } finally {cleanup(env);}
+});
+
+test('an earlier faster attempt cannot replace the later native scoring-shot peak across its acceleration dip', async () => {
+    const env = environment();
+    try {
+        const {room, members} = await rocketsMatch(env, 1), attacker = members[0], slot = roster(room, attacker).slot; room.room.state.ftu = -1;
+        Object.assign(room.room.state.ball, {x:30, y:250 / 11, xv:60, yv:0});
+        Object.assign(room.room.state.discs[slot], {x:32.1, y:250 / 11, xv:0, yv:0});
+        await command(room, attacker, {type:'input', seq:1, flags:16}); room.tick();
+        assert.ok(room.room.state.ball.xv < 35, 'the native opposing kick creates a speed dip');
+        await command(room, attacker, {type:'input', seq:2, flags:0}); room.tick();
+        const dip = Math.hypot(room.room.state.ball.xv, room.room.state.ball.yv);
+        Object.assign(room.room.state.discs[slot], {x:room.room.state.ball.x - 2.1, y:room.room.state.ball.y, xv:0, yv:0});
+        await command(room, attacker, {type:'input', seq:3, flags:16}); room.tick();
+        const scoringPeak = Math.hypot(room.room.state.ball.xv, room.room.state.ball.yv);
+        assert.ok(scoringPeak > dip); assert.ok(scoringPeak < 60); assert.equal(room.room.rockets.speedHistory[0], 60);
+        await command(room, attacker, {type:'input', seq:4, flags:0});
+        for (let frame = 0; frame < 120 && !room.room.rockets.turnEnded; frame++) room.tick();
+        const record = room.room.rockets.records[attacker.member.id]; assert.equal(room.room.state.lscr, 3); assert.equal(record.scored, true); assert.equal(record.speed, scoringPeak);
+        assert.ok(record.speed < Math.max(...room.room.rockets.speedHistory)); assert.ok(record.speed > room.room.rockets.speedHistory.at(-1));
+    } finally {cleanup(env);}
+});
+
+test('Rockets clears shot samples at a side-swap kickoff and the next attacker without adding turn time', async () => {
+    const env = environment();
+    try {
+        const {room, members} = await rocketsMatch(env, 2); room.room.state.ftu = -1; room.room.state.ball.xv = 12; room.tick();
+        assert.equal(room.room.rockets.speedHistory.length, 2); const remaining = room.room.rockets.turnTicksLeft;
+        await command(room, members[0], {type:'preference', team:2}); room.stopTimer();
+        assert.deepEqual(room.room.rockets.speedHistory, []); assert.equal(room.room.rockets.turnTicksLeft, remaining); assert.equal(room.room.state.ftu, 120);
+        for (let frame = 0; frame < 121; frame++) room.tick(); assert.deepEqual(room.room.rockets.speedHistory, []); assert.equal(room.room.rockets.turnTicksLeft, remaining);
+        room.room.state.ball.xv = 7; room.tick(); assert.equal(room.room.rockets.speedHistory[0], 7); assert.equal(room.room.rockets.speedHistory.length, 2);
+        room.room.rockets.turnTicksLeft = 1; room.tick(); assert.equal(room.room.rockets.attackerId, members[1].member.id); assert.deepEqual(room.room.rockets.speedHistory, []); assert.equal(room.room.rockets.turnTicksLeft, 900);
+        assert.equal(room.room.rockets.records[members[0].member.id].scored, false); assert.equal(members[0].socket.received.some(message => message.system), false);
+    } finally {cleanup(env);}
+});
+
+test('a full timed-out Rockets turn stores at most its initial sample plus 900 active samples and awards no speed', async () => {
+    const env = environment();
+    try {
+        const {room, members} = await rocketsMatch(env, 1); room.room.state.ftu = -1;
+        for (let frame = 0; frame < 900; frame++) room.tick();
+        assert.equal(room.room.status, 'results'); assert.equal(room.room.rockets.speedHistory.length, 901); assert.ok(room.room.rockets.speedHistory.every(speed => speed === 0));
+        assert.equal(room.room.results.leaderboard[0].scored, false); assert.equal(room.room.results.leaderboard[0].speed, null); assert.equal(members[0].socket.received.some(message => message.system), false);
+    } finally {cleanup(env);}
+});
+
+test('Rockets checkpoint resume keeps the actual scoring-shot history while older checkpoints seed their first resumed live step', async () => {
+    const env = environment(); let restored;
+    try {
+        const {room, members} = await rocketsMatch(env, 1), slot = roster(room, members[0]).slot; room.room.state.ftu = -1;
+        Object.assign(room.room.state.discs[slot], {x:58, y:250 / 11, xv:0, yv:0}); Object.assign(room.room.state.ball, {x:60.1, y:250 / 11, xv:0, yv:0});
+        await command(room, members[0], {type:'input', seq:1, flags:16}); room.tick(); const peak = Math.hypot(room.room.state.ball.xv, room.room.state.ball.yv), history = [...room.room.rockets.speedHistory];
+        await room.persist(); restored = new FootballRoom(context(room.ctx.storage), env); await restored.ready; restored.stopTimer(); assert.deepEqual(restored.room.rockets.speedHistory, history);
+        for (let frame = 0; frame < 30 && !restored.room.rockets.turnEnded; frame++) restored.tick();
+        assert.equal(restored.room.rockets.records[members[0].member.id].speed, peak);
+        const checkpoint = await room.ctx.storage.get('checkpoint'); checkpoint.room.rockets.turnEnded = false; checkpoint.room.rockets.records = {}; delete checkpoint.room.rockets.speedHistory;
+        checkpoint.room.state.ftu = -1; checkpoint.room.state.fte = -1; checkpoint.room.state.scores = [0, 0, 0, 0]; Object.assign(checkpoint.room.state.ball, {x:701 / 11, y:250 / 11, xv:20, yv:0});
+        const oldStorage = new Storage(); await oldStorage.put('checkpoint', checkpoint); restored.stopTimer(); restored = new FootballRoom(context(oldStorage), env); await restored.ready; restored.stopTimer();
+        assert.deepEqual(restored.room.rockets.speedHistory, []); restored.tick(); assert.deepEqual(restored.room.rockets.speedHistory, [20, 19.6]); assert.equal(restored.room.rockets.records[members[0].member.id].speed, 20);
+    } finally {restored?.stopTimer(); cleanup(env);}
+});
+
+test('restored shot history retains only its bounded contiguous valid suffix', async () => {
+    const env = environment(); let restored;
+    try {
+        const {room} = await rocketsMatch(env, 1);
+        for (const [source, expected] of [[[99, 90, null, 30, 29], [30, 29]], [[40, -1], []], [Array.from({length:1000}, (_, i) => i), Array.from({length:901}, (_, i) => i + 99)]]) {
+            room.room.rockets.speedHistory = source; await room.persist(); restored = new FootballRoom(context(room.ctx.storage), env); await restored.ready; restored.stopTimer(); assert.deepEqual(restored.room.rockets.speedHistory, expected);
+        }
+    } finally {restored?.stopTimer(); cleanup(env);}
 });
 
 test('admin Red assignments override earlier Blue choices and survive joins, Start, Abort and resume', async () => {

@@ -73,10 +73,18 @@ position. Further preference changes apply to a future turn. Waiting players can
 also save a preferred side for their own attacking turn.
 
 A successful goal posts a system chat message such as `Player reached 19.6 m/s.`
-The measurement matches `Project-002/football-ball-speed.user.js` from the
-supplied references: `Math.hypot(ball.xv, ball.yv)`, captured from the scoring
-physics tick. Velocity is already in metres per second. Rankings keep full
-precision and only round the displayed value.
+Each speed sample uses `Math.hypot(ball.xv, ball.yv)`, as in the supplied
+`Project-002/football-ball-speed.user.js`. When a goal is scored, Rockets walks
+back through these samples while the speed rises or stays equal, stopping at
+the first smaller earlier value. The highest value in that final shot sets
+the result, so slowing down on the way to goal does not lower the score and
+an earlier, faster attempt cannot replace the scoring shot.
+
+The server keeps at most 901 samples: the initial speed and one sample per
+active physics tick. The history resets for each attacker and any shooting-side
+restart, stays out of public room data, and survives a server checkpoint.
+Velocity is already in metres per second. Rankings keep full precision and
+only round the displayed value. The ball's live label still shows its current speed.
 
 Rockets displays live ball speed underneath the ball in the same font and
 colour as the player names. Pitch vectors are

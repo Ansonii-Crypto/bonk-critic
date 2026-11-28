@@ -41,6 +41,23 @@ export function goalSpeed(beforeState, afterState) {
     return ballSpeed(afterState);
 }
 
+// Samples are in chronological order. Starting at the goal, follow the final
+// slowing shot backwards to its peak; an earlier, smaller speed ends that shot.
+// This deliberately ignores faster attempts separated by another acceleration.
+export function scoringShotSpeed(history) {
+    if (!Array.isArray(history) || !history.length) return null;
+    let peak = history[history.length - 1];
+    if (!Number.isFinite(peak) || peak < 0) return null;
+    for (let index = history.length - 2; index >= 0; index--) {
+        const speed = history[index];
+        if (!Number.isFinite(speed) || speed < 0) break;
+        const tolerance = 1e-9 * Math.max(1, peak, speed);
+        if (speed < peak - tolerance) break;
+        peak = Math.max(peak, speed);
+    }
+    return peak;
+}
+
 function joinOrder(a, b) {
     const aTime = Number.isFinite(a.joinedAt) ? a.joinedAt : Infinity;
     const bTime = Number.isFinite(b.joinedAt) ? b.joinedAt : Infinity;

@@ -1,6 +1,6 @@
 import {FootballPhysics, FOOTBALL_CONSTANTS as C, getPitchGeometry} from './physics.js?v=20261127-football-15';
 import {DEFAULT_MATCH_SETTINGS, SETTING_RULES, validateMatchSettings, goalHeightLimit} from './settings.js?v=20261127-football-13';
-import {FOOTBALL_MODES, ballSpeed} from './modes.js?v=20261127-football-16';
+import {FOOTBALL_MODES, ballSpeed} from './modes.js?v=20261128-football-17';
 import {maskProfanity} from './chat-filter.js?v=20261127-football-6';
 import {DEFAULT_KEYBINDS, BINDING_ACTIONS, validateKeybinds, canonicalBindingCode} from './keybinds.js?v=20261127-football-6';
 import {initFootballAccount} from './account-menu.js?v=20261127-football-11';
@@ -468,7 +468,7 @@ function renderGamePanels() {
         const result = room.results, rocketResults = result.mode === 'rockets';
         setText($('gameOverlay').querySelector('.overlay-heading .eyebrow'), rocketResults ? 'ROCKETS COMPLETE' : 'GAME COMPLETE');
         setText($('overlayTitle'), rocketResults ? 'Fastest goals' : room.winner ? teamName(room.winner) + ' wins' : 'Game complete');
-        setText($('overlayDescription'), rocketResults ? 'Ranked by ball speed as it crossed the goal.' : 'The game has finished.');
+        setText($('overlayDescription'), rocketResults ? 'Ranked by the scoring shot’s peak speed.' : 'The game has finished.');
         setText($('overlayCountdown'), room.transition ? 'Returning to lobby…' : 'Lobby in ' + countdown(result.deadline) + 's');
         const scores = result.scores || [0, 0, 0, 0];
         setText($('resultsSummary'), rocketResults ? 'One turn per player, in join order. Speeds are measured in m/s.' : 'Blue ' + scores[3] + ' — ' + scores[2] + ' Red');
